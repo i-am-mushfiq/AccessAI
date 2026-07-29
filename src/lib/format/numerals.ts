@@ -89,7 +89,13 @@ export function formatMoney(
  * Bangla 0–99 is irregular, so a full table is the only correct approach —
  * generating "২১" as "বিশ এক" would be wrong (it is একুশ).
  */
-const BN_UNDER_100 = [
+/**
+ * Exported so `number-words.ts` can INVERT these tables rather than retyping
+ * them. Speech recognition hands back number words, and parsing them with a
+ * second, hand-written vocabulary would let the two drift — a word this file can
+ * produce but the parser cannot read is a spoken amount silently lost.
+ */
+export const BN_UNDER_100 = [
   'শূন্য', 'এক', 'দুই', 'তিন', 'চার', 'পাঁচ', 'ছয়', 'সাত', 'আট', 'নয়',
   'দশ', 'এগারো', 'বারো', 'তেরো', 'চৌদ্দ', 'পনেরো', 'ষোলো', 'সতেরো', 'আঠারো', 'উনিশ',
   'বিশ', 'একুশ', 'বাইশ', 'তেইশ', 'চব্বিশ', 'পঁচিশ', 'ছাব্বিশ', 'সাতাশ', 'আটাশ', 'ঊনত্রিশ',
@@ -102,11 +108,11 @@ const BN_UNDER_100 = [
   'নব্বই', 'একানব্বই', 'বিরানব্বই', 'তিরানব্বই', 'চুরানব্বই', 'পঁচানব্বই', 'ছিয়ানব্বই', 'সাতানব্বই', 'আটানব্বই', 'নিরানব্বই',
 ] as const;
 
-const EN_UNDER_20 = [
+export const EN_UNDER_20 = [
   'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
   'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen',
 ] as const;
-const EN_TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'] as const;
+export const EN_TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'] as const;
 
 function bnUnderThousand(n: number): string {
   const parts: string[] = [];

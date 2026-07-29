@@ -101,6 +101,33 @@ const schema = z.object({
   SMS_API_KEY: optionalStr,
   SMS_SENDER_ID: optionalStr,
 
+  /* ------------------------------------------------------------- voice */
+  /**
+   * Speech-to-text, OPTIONAL. Without it, dictation uses the browser's Web
+   * Speech API where available and the microphone is disabled with a stated
+   * reason where it is not. Nothing is ever simulated: an invented transcript
+   * would be acted on.
+   *
+   * The endpoint is the OpenAI-compatible `/audio/transcriptions` shape, which
+   * hosted Whisper and a self-hosted whisper.cpp server both speak — so
+   * `STT_BASE_URL` is the only thing that changes between them.
+   */
+  STT_API_KEY: optionalStr,
+  STT_BASE_URL: nonEmpty.default('https://api.openai.com/v1'),
+  STT_MODEL: nonEmpty.default('whisper-1'),
+  /**
+   * Vocabulary bias for the decoder. Seeding the domain words this app needs
+   * measurably cuts the mishearings that matter, because a general model has no
+   * reason to prefer "বিধবা ভাতা" over similar-sounding nonsense.
+   */
+  STT_PROMPT: optionalStr,
+
+  /** Text-to-speech, OPTIONAL — used only when the browser has no Bangla voice. */
+  TTS_API_KEY: optionalStr,
+  TTS_BASE_URL: nonEmpty.default('https://api.openai.com/v1'),
+  TTS_MODEL: nonEmpty.default('tts-1'),
+  TTS_VOICE: nonEmpty.default('alloy'),
+
   GOOGLE_MAPS_API_KEY: optionalStr,
   NEXT_PUBLIC_MAPBOX_TOKEN: optionalStr,
   NEXT_PUBLIC_MAP_PROVIDER: z.enum(['none', 'mapbox', 'google']).default('none'),
@@ -122,6 +149,7 @@ const schema = z.object({
   RATE_LIMIT_WINDOW_MS: int(60_000),
   RATE_LIMIT_MAX_REQUESTS: int(120),
   RATE_LIMIT_AI_MAX_REQUESTS: int(20),
+  RATE_LIMIT_VOICE_MAX_REQUESTS: int(30),
 });
 
 function load() {

@@ -94,7 +94,7 @@ export function clientIp(request: Request): string | undefined {
  */
 export async function guardRateLimit(
   request: Request,
-  scope: 'default' | 'ai' | 'auth',
+  scope: 'default' | 'ai' | 'auth' | 'voice',
   identity?: string,
 ): Promise<{ ok: true } | { ok: false; response: NextResponse }> {
   const limits = {
@@ -102,6 +102,13 @@ export async function guardRateLimit(
     ai: { limit: env.RATE_LIMIT_AI_MAX_REQUESTS, windowMs: env.RATE_LIMIT_WINDOW_MS },
     // Deliberately tight: this is the brute-force surface.
     auth: { limit: 10, windowMs: 60_000 },
+    /**
+     * Audio is the most expensive input in the system — a megabyte of upload and
+     * a per-minute transcription charge per press — so it gets the smallest
+     * budget. 30/min still allows continuous voice navigation, where each command
+     * is a two-second clip.
+     */
+    voice: { limit: env.RATE_LIMIT_VOICE_MAX_REQUESTS, windowMs: env.RATE_LIMIT_WINDOW_MS },
   }[scope];
 
   const key = identity ? `${scope}:user:${identity}` : clientKey(request, scope);
