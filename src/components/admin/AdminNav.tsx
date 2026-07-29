@@ -1,0 +1,58 @@
+'use client';
+
+import { useTranslations } from 'next-intl';
+import { LayoutDashboard, Database, Building2, Scale, MessageSquareWarning, Cpu, Users } from 'lucide-react';
+import { Link, usePathname } from '@/i18n/navigation';
+import { cn } from '@/lib/utils/cn';
+
+/**
+ * Admin section navigation.
+ *
+ * A horizontal scroller rather than a second sidebar: the citizen-facing sidebar
+ * already occupies the left edge on desktop, and nesting two levels of vertical
+ * navigation would breach BDS §79's three-level maximum.
+ */
+const ITEMS = [
+  { href: '/admin', key: 'overview', icon: LayoutDashboard },
+  { href: '/admin/programmes', key: 'programmes', icon: Database },
+  { href: '/admin/organisations', key: 'organizations', icon: Building2 },
+  { href: '/admin/rules', key: 'rules', icon: Scale },
+  { href: '/admin/moderation', key: 'moderation', icon: MessageSquareWarning },
+  { href: '/admin/ai-logs', key: 'aiLogs', icon: Cpu },
+  { href: '/admin/users', key: 'users', icon: Users },
+] as const;
+
+export function AdminNav() {
+  const t = useTranslations('admin');
+  const pathname = usePathname();
+
+  return (
+    <nav aria-label={t('title')} className="-mx-4 overflow-x-auto px-4 no-scrollbar md:-mx-5 md:px-5">
+      <ul className="flex gap-2">
+        {ITEMS.map((item) => {
+          const active = item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href);
+          const Icon = item.icon;
+          return (
+            <li key={item.href}>
+              <Link
+                href={item.href}
+                aria-current={active ? 'page' : undefined}
+                className={cn(
+                  'inline-flex min-h-12 shrink-0 items-center gap-2 rounded-pill px-4 type-label-md',
+                  'border-[length:var(--bds-border-width-functional)] transition-colors duration-fast',
+                  'focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2',
+                  active
+                    ? 'border-stroke-brand bg-surface-brand-subtle text-text-brand'
+                    : 'border-stroke bg-surface text-text-primary hover:bg-surface-sunken',
+                )}
+              >
+                <Icon size={18} className="icon shrink-0" aria-hidden="true" />
+                {t(item.key)}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}

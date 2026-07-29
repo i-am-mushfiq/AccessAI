@@ -1,0 +1,27 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Local database + generated artefacts
+data/
+drizzle/meta/_journal.json.bak
+
+# Secrets — never commit (PRD §87)
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Test output
+coverage/
+.vitest/

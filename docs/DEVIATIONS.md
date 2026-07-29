@@ -1,0 +1,279 @@
+# Deviations
+
+Every place this build departs from the PRD or the Bhorosha Design System, why, and what it would
+take to close the gap. Ordered by how much it matters.
+
+Where the two source documents conflicted, the resolution followed the stated hierarchy:
+**PRD for product behaviour, Design System for anything the citizen sees.**
+
+---
+
+## 1. PostgreSQL + Redis → libSQL, no second service
+
+**PRD §37** specifies PostgreSQL with pgvector, Redis, BullMQ, and a NestJS backend in a Turborepo
+monorepo (§82).
+
+**Built:** one Next.js app; Route Handlers as the API layer; libSQL (SQLite dialect) via Drizzle;
+rate limiting and job bookkeeping in the primary database.
+
+**Why:** the PRD stack cannot start without Docker, a database, and credentials, which means no
+flow could have been verified before delivery. This was raised and confirmed with you before any
+code was written.
+
+**Containment.** Business logic is framework-free: services import no `Request`, no `Response`, and
+nothing from `next/*`. Route handlers only parse, guard, and serialise.
+
+```
+src/app/api/v1/**/route.ts   ← adapter, replaceable
+src/modules/**/*.service.ts  ← moves to a NestJS provider unchanged
+src/lib/db/client.ts         ← the ONLY file that knows the SQL engine
+```
+
+**To close it:** swap `drizzle-orm/libsql` for `drizzle-orm/node-postgres` in `client.ts`, change
+the column helpers in `schema.ts` (`integer timestamp_ms` → `timestamptz`, `text json` → `jsonb`),
+point `drizzle.config.ts` at Postgres, and move `rateLimitBuckets` to Redis. The services and
+routes do not change.
+
+---
+
+## 2. PRD Part 7 does not exist — the knowledge pipeline was authored
+
+**The gap.** The source PRD numbers sections 1→100, then jumps to "118. Production Deployment
+Strategy". Sections 101–117 — **Part 7, Knowledge Base & Data Pipeline** — are absent. The document
+announces the omission itself. So there is no specification for: which programmes are in v1, the
+source for each, who authors `rule_json`, who reviews it, the staleness policy, or the licensing
+position on redistributing government circulars.
+
+That is not a small gap. It is the part that determines whether anything the platform says is true.
+
+**What was authored instead** — [docs/KNOWLEDGE-PIPELINE.md](KNOWLEDGE-PIPELINE.md), implemented as:
+
+| Concern | Implementation |
+|---|---|
+| Trust states | `verification_status`: `unverified_sample` → `pending_review` → `verified`, plus `outdated` and `disputed` |
+| Provenance | `source_url`, `source_note`, `last_verified_at`, `verified_by`, `review_interval_days` per record |
+| Licensing | `documents.license_note` per source document |
+| Review workflow | `knowledge_reviews`; nothing becomes `verified` without an administrator decision |
+| Separation of duties | A moderator may triage; only an administrator may verify (enforced, tested) |
+| Anti-self-certification | Verifying and editing in the same request is refused with 422 |
+| Staleness | `detect_staleness` job flags verified records past their review interval as `outdated` and closes expired programmes |
+| Versioning | Any content change bumps `version` and drops `verified` back to `pending_review` |
+| Consequence | The confidence scorer caps `unverified_sample` at 65%; the UI badges it everywhere |
+
+**The corpus is 42 authored programmes**, structured after real Bangladeshi programmes
+administered by real bodies (DSS, DWA, DAE, BMET, NLASO, SME Foundation, BRAC, BLAST…), across all
+11 PRD categories. **The thresholds and amounts are representative, not verified.** Replacing them
+requires no code change — the admin portal owns the corpus.
+
+---
+
+## 3. pgvector → BM25, with vectors optional
+
+**PRD §37** specifies pgvector; **§26** requires hybrid retrieval (semantic + keyword + metadata +
+structured).
+
+**Built:** metadata pre-filtering in SQL, then BM25 over pre-computed per-chunk term frequencies,
+fused with cosine similarity over stored embeddings **when an embedding provider is configured**.
+Scores are combined with Reciprocal Rank Fusion rather than a weighted sum, because BM25 and cosine
+are on incomparable scales and any fixed weighting between them is arbitrary.
+
+Without a key the semantic channel contributes **nothing** rather than being simulated, and
+`retrieval.mode` reports `lexical only (BM25)` in the admin panel. The retriever returns an empty
+result when neither channel scores anything, so the caller reports "no verified information"
+instead of surfacing arbitrary rows.
+
+Vectors live in a JSON column and cosine is computed in process — correct for hundreds of chunks,
+and interface-identical to a pgvector swap.
+
+---
+
+## 4. The eligibility rule grammar was designed, not specified
+
+**PRD §24** mandates that the engine must not use an LLM and says only *"Store rules as JSON"*, then
+requires outputs including `Unknown` (§17) and reasoning for every decision (§18).
+
+Those requirements need three things the PRD does not define, so they were designed:
+
+1. **Three-valued logic.** A missing profile field yields `unknown`, never `false`. Treating absent
+   data as failure would silently deny benefits — the exact harm §22 exists to prevent. `unknown`
+   propagates: an `all` group with an unknown and no failure is `unknown`, not eligible.
+2. **A hard bar still decides.** A man applying to a women-only programme is `not_eligible` even
+   with income unrecorded, so the system does not ask him pointless questions.
+3. **Explanation as data.** Every condition carries its citizen-facing reason for met, failed, and
+   unknown, in both languages. The model never authors a reason; it re-voices what the engine
+   emitted.
+
+Also designed: soft conditions (fail → `partially_eligible`, never disqualifying), weights driving
+both the ranking score and reason ordering, and rule **versioning** so a stored decision can be
+replayed against the exact rule that produced it.
+
+`tests/eligibility/engine.test.ts` — 28 assertions.
+
+---
+
+## 5. Prompt templates are `.ts`, not `.md`
+
+**PRD §90** requires prompts to live outside services, be version-controlled, and be reviewable by
+non-developers, illustrated with `.md` files.
+
+**Built:** `src/prompts/index.ts` — plain template strings with a `version` field written to
+`ai_logs.prompt_version` on every call. Chosen over `.md` because raw-text imports need bundler
+configuration that would break the Edge runtime, and because a typed template cannot be rendered
+with a missing variable. The substance (outside services, versioned, reviewable, traceable) holds.
+
+---
+
+## 6. Email + password + Google → phone + OTP + PIN
+
+**PRD §59** specifies login, register, forgot password, email verification, and Google login.
+**BDS §10.2.11** forbids requiring an email (*"a large share of target users do not have or
+remember one — phone number is the identity"*), forbids strong-password rules, and specifies phone
++ OTP with a 4–6 digit PIN. **BDS §1.2 red line 11** bans CAPTCHA.
+
+**Resolved as:** phone + OTP + PIN is the primary path (Design System wins on the interaction), and
+`users.email` is retained as an **optional** column so the PRD's account model still works.
+Google OAuth is not implemented — see [EXTERNAL.md](EXTERNAL.md).
+
+Because a 4-digit PIN has only 10,000 combinations, brute force is contained by progressive delay
+plus a **temporary, self-clearing 10-minute lock** — never a permanent lockout, which BDS §10.2.5
+identifies as where low-confidence citizens abandon for good. The locked-out screen offers the OTP
+route rather than a dead end.
+
+---
+
+## 7. Redis rate limiting → in-database token bucket
+
+**PRD §48** specifies Redis. Implemented as a token bucket in `rate_limit_buckets` with the same
+interface. A token bucket rather than a fixed window because a fixed window permits a full-quota
+burst at each boundary — twice the intended rate. Separate quotas per scope: `auth` 10/min (the
+brute-force surface), `ai` 20/min (the expensive one), `default` 120/min.
+
+---
+
+## 8. BullMQ workers → idempotent jobs, run on demand or by a scheduler
+
+**PRD §45 / §119** specify BullMQ background workers.
+
+Implemented as five idempotent functions, each recording a `job_runs` row, invocable from the admin
+UI or over HTTP by any scheduler: `reindex_search`, `rebuild_embeddings`, `detect_staleness`,
+`scheduled_notifications`, `aggregate_analytics`.
+
+`rebuild_embeddings` **honestly no-ops** when no embedding provider is configured, recording
+`{skipped: true, reason: "No embedding provider configured (set OPENAI_API_KEY)"}` rather than
+reporting a fake success.
+
+Two jobs also run inline where staleness would be visible to a citizen: opening the timeline
+reconciles deadlines and creates due reminders, so the screen is never stale between job runs.
+
+---
+
+## 9. The rule editor is read-only in the UI
+
+**PRD §Feature 20** lists "Update Rules"; **§77** lists "Rule Management".
+
+`POST /api/v1/admin/rules` is fully implemented: it validates the grammar, refuses malformed
+operators, publishes a new **version** rather than editing in place, deactivates the previous one,
+and **smoke-tests** the rule against three synthetic profiles — empty, broadly-eligible, and
+deliberately mismatched — returning warnings for the two failure modes that make a rule useless in
+practice: one nobody can satisfy, and one everybody satisfies.
+
+The **UI** for authoring is read-only: it shows each active rule, the fields it reads, and flags
+fields that are tested but not declared required (so the system would never ask about them). A
+free-text JSON editor was deliberately not shipped, because it would let an author save a rule that
+parses but can never match anyone — which is what the smoke test exists to catch. A guided
+condition builder is the right next step.
+
+---
+
+## 10. Design system erratum: `green.300` on `green.800` is 5.29:1, not 8.63:1
+
+**BDS §3.3** states that `green.300` (`#74CCAD`) on `green.800` (`#084B39`) is **8.63:1** and calls
+it *"the mandatory text/icon colour"* for the hero surface.
+
+**The computed value is 5.29:1.** Verified independently:
+
+| Foreground on `green.800` | Ratio | Verdict |
+|---|---|---|
+| `green.300` `#74CCAD` | **5.29:1** | AA only |
+| `green.200` `#A8E1CB` | 6.89:1 | AA only |
+| `green.100` `#D3F0E4` | **8.36:1** | AAA |
+| `white` | 10.12:1 | AAA |
+
+5.29:1 passes AA for normal text and clears the 3:1 threshold for icons, but **not** the
+*"AAA contrast on all body text"* house rule the same document sets in its own header.
+
+**Resolution — the pairing is split rather than the token changed:**
+- `green.300` stays as `--bds-text-on-brand-deep` for small labels and icons on `surface.brand`.
+- **Body copy on `surface.brand` uses `green.100`** (8.36:1), so the AAA rule holds.
+
+Both bounds are asserted in `tests/tokens/contrast.test.ts`, including that `green.300` is
+`< 7:1`, so a future author cannot promote it to body text believing the document's figure.
+
+**This needs your decision** — see [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) Q1.
+
+---
+
+## 11. Argon2id → scrypt fallback
+
+**PRD §48 / §121** specify Argon2. `@node-rs/argon2` is declared an **optional** dependency: when
+present it is used; when absent (common on Windows without prebuilt binaries) the code falls back to
+scrypt from Node core at N=2^15 (~32 MB per hash).
+
+Both paths produce a self-describing string recording which algorithm made it, so verification
+routes itself correctly and an installation can gain Argon2 later **without invalidating existing
+credentials**. A credential made with Argon2 on a host that later loses the module **fails closed**
+with an explanatory error rather than silently accepting.
+
+---
+
+## 12. Interactive map → ordered list with the map as enhancement
+
+**PRD §70** describes an interactive Mapbox/Google map. Without a provider key, Nearby Services
+renders a **distance-ordered list** with call and directions actions, and states why there is no
+map. Setting `NEXT_PUBLIC_MAP_PROVIDER` + a token enables tiles.
+
+Distances are computed from district-headquarters coordinates (±5 km) or from device geolocation
+when granted, and are **labelled approximate** in both cases where the reference is a district
+centroid. Presenting a centroid distance as precise would send someone walking the wrong way.
+
+---
+
+## 13. Voice OTP is offered but disabled
+
+**BDS §10.2.5** requires a voice-OTP fallback as the accessible-authentication path. The button is
+present, **disabled with a visible reason** ("this needs a telephony service"), rather than absent
+or silently non-functional. Requires a voice provider — see [EXTERNAL.md](EXTERNAL.md).
+
+---
+
+## 14. "Similar User Success" ranking factor returns neutral
+
+**PRD §31** allocates 10% of the ranking score to "Similar User Success". That requires historical
+outcome data this prototype has not accumulated. The component returns a **neutral 50** and reports
+`similarUserDataAvailable: false` rather than inventing a success rate — fabricating one would be
+exactly the unsupported claim §33 forbids. The other five factors carry their specified weights.
+
+---
+
+## 15. Smaller notes
+
+- **Bangla month names and grouping are hand-written**, not from `Intl`. `Intl.DateTimeFormat('bn-BD')`
+  and `NumberFormat('bn-BD')` emit Bengali digits in most runtimes, which would defeat the
+  Latin-digit default (BDS §4.3) and make the numeral toggle unable to control its own output.
+- **Service locations are generated** from the district table (5 per district × 64 + 7 named
+  national institutions = 327). Bangladesh genuinely has one Social Services office, one Sadar
+  hospital, one legal aid office, one agriculture office and one youth office per district, so this
+  gives correct national coverage. Street addresses are structurally honest ("Sadar, <District>")
+  and **no phone numbers are invented** — only real national helplines appear.
+- **Bangla stemming is deliberately shallow.** A short suffix list, not a full stemmer. Aggressive
+  stemming on conjuncts produces false matches, and a citizen acting on the wrong programme wastes
+  a trip to a government office.
+- **`next` has an open advisory with no patched release** in any channel (its suggested "fix" is
+  v9.3.3). Pinned to the newest 15.x (15.5.22). `drizzle-orm`, `next-intl`, and their transitive
+  `postcss` were upgraded to patched majors.
+- **Uploads** (PRD §Feature 8 / §63) are not implemented. The word "upload" is banned by BDS §12.3
+  in favour of a camera capture flow; the schema, `documents` table, and admin indexing path exist,
+  but no capture UI or object-storage writer was built.
+- **Streaming chat responses** (PRD §92 Sprint 2) are not implemented; responses arrive whole. The
+  waiting state escalates at 8 s to the reassurance line BDS §10.1.5 requires.
+- **PWA / push notifications** are not implemented. Notifications are persisted and shown in-app.
