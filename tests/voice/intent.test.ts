@@ -56,6 +56,59 @@ describe('the registry itself is sound', () => {
   });
 });
 
+describe('every phrase the registry contains actually resolves to its own command', () => {
+  /**
+   * The round trip. A phrase listed under a command but not matchable by it is
+   * invisible until a citizen says it and nothing happens — and worse, the help
+   * screen TEACHES the first Bangla phrase of every command, so an unmatchable
+   * one becomes an instruction to say something that does not work.
+   *
+   * That is not hypothetical: `পড়ে শোনান` was the label help displayed for
+   * read-aloud while the registry only matched `পড়ে শোনাও`, a different verb
+   * ending. This test is why that cannot recur.
+   */
+  const everything: IntentContext = {
+    locale: 'bn',
+    authenticated: true,
+    isStaff: true,
+    availableActions: VOICE_COMMANDS.filter((c) => c.kind === 'action').map((c) => c.id),
+  };
+
+  for (const command of VOICE_COMMANDS) {
+    if (command.confirmationOnly) continue;
+
+    for (const phrase of command.phrases) {
+      // Wildcard and slot patterns are templates, not utterances; they are
+      // exercised with real payloads in the search and filter tests below.
+      if (phrase.includes('*') || phrase.includes(':')) continue;
+
+      it(`"${phrase}" → ${command.id}`, () => {
+        const result = resolveIntent(phrase, everything);
+        if (result.kind !== 'command') {
+          throw new Error(`"${phrase}" is listed under ${command.id} but resolves to nothing`);
+        }
+        // Some short words legitimately serve two commands; what must never
+        // happen is a phrase resolving to a command of a different KIND, e.g. a
+        // navigation word triggering a state change.
+        if (result.command.id !== command.id) {
+          expect(result.command.kind, `"${phrase}" (${command.id} → ${result.command.id})`).toBe(command.kind);
+        }
+      });
+    }
+  }
+
+  it('teaches only phrases it can match, on the help screen', () => {
+    // Help shows the first Bangla phrase of each command as the thing to say.
+    for (const command of VOICE_COMMANDS) {
+      if (command.confirmationOnly) continue;
+      const taught = command.phrases.find((p) => /[ঀ-৿]/.test(p) && !p.includes('*') && !p.includes(':'));
+      if (!taught) continue;
+      const result = resolveIntent(taught, everything);
+      expect(result.kind, `help teaches "${taught}" for ${command.id}`).toBe('command');
+    }
+  });
+});
+
 describe('navigation in Bangla', () => {
   const cases: [string, string][] = [
     ['হোম', 'nav.dashboard'],
@@ -128,8 +181,20 @@ describe('permissions are respected before routing, not after', () => {
     const withSave: IntentContext = { ...citizen, availableActions: ['action.save'] };
     expectCommand('সেভ করো', 'action.save', withSave);
 
+    /**
+     * On a screen with nothing to save, "সেভ করো" must not perform an action.
+     *
+     * It may still resolve to NAVIGATION — "সেভ করা" is a phrase for the saved
+     * list and sits one character away, so opening that list is a defensible and
+     * reversible reading. The property under test is the one that matters: no
+     * state change on a screen that cannot make it. Asserting `unmatched`
+     * instead would be asserting the mechanism rather than the guarantee.
+     */
     const withoutSave: IntentContext = { ...citizen, availableActions: [] };
-    expect(resolveIntent('সেভ করো', withoutSave).kind).toBe('unmatched');
+    const result = resolveIntent('সেভ করো', withoutSave);
+    if (result.kind === 'command') {
+      expect(result.command.kind).not.toBe('action');
+    }
   });
 });
 

@@ -172,7 +172,7 @@ const NAVIGATION: readonly VoiceCommand[] = [
     auth: true,
     labelKey: 'navNotifications',
     phrases: [
-      'বিজ্ঞপ্তি', 'নোটিফিকেশন', 'খবর', 'নতুন কী', 'আপডেট',
+      'বিজ্ঞপ্তি', 'বিজ্ঞপ্তিগুলো', 'নোটিফিকেশন', 'নোটিফিকেশান', 'খবর', 'নতুন কী', 'আপডেট',
       'notifications', 'alerts', 'updates', "what's new", 'notification',
     ],
   },
@@ -279,7 +279,8 @@ const ACTIONS: readonly VoiceCommand[] = [
     auth: true,
     labelKey: 'actionSave',
     phrases: [
-      'এটা সংরক্ষণ করো', 'সেভ করো', 'তালিকায় রাখো', 'এটা রাখো', 'সংরক্ষণ',
+      'এটা সংরক্ষণ করো', 'সংরক্ষণ করুন', 'সেভ করো', 'সেভ করুন',
+      'তালিকায় রাখো', 'তালিকায় রাখুন', 'এটা রাখো', 'সংরক্ষণ',
       'save this', 'save it', 'add to my list', 'bookmark this', 'save kore rakho',
     ],
   },
@@ -301,7 +302,10 @@ const ACTIONS: readonly VoiceCommand[] = [
     auth: true,
     labelKey: 'actionApplyStarted',
     phrases: [
-      'আবেদন করেছি', 'আবেদন করলাম', 'জমা দিয়েছি', 'আবেদন সম্পন্ন',
+      // Compound verbs are the normal spoken form: "করে ফেলেছি" is far more
+      // likely than the bare "করেছি" a phrase list would naively contain.
+      'আবেদন করেছি', 'আবেদন করে ফেলেছি', 'আবেদন করলাম', 'আবেদন হয়ে গেছে',
+      'জমা দিয়েছি', 'জমা দিয়ে দিয়েছি', 'আবেদন সম্পন্ন',
       'i have applied', 'mark as applied', 'i applied', 'application submitted',
     ],
   },
@@ -312,7 +316,8 @@ const ACTIONS: readonly VoiceCommand[] = [
     auth: true,
     labelKey: 'actionTaskDone',
     phrases: [
-      'কাজটা শেষ', 'হয়ে গেছে', 'সম্পন্ন করেছি', 'এই কাজ শেষ', 'টিক দাও',
+      'কাজটা শেষ', 'কাজটি শেষ', 'হয়ে গেছে', 'হয়ে গিয়েছে',
+      'সম্পন্ন করেছি', 'সম্পন্ন হয়েছে', 'এই কাজ শেষ', 'টিক দাও', 'টিক দিন',
       'mark done', 'task done', 'completed', 'finished this', 'tick this off',
     ],
   },
@@ -349,7 +354,10 @@ const META: readonly VoiceCommand[] = [
     confirm: 'never',
     labelKey: 'metaReadAloud',
     phrases: [
-      'পড়ে শোনাও', 'পড়ো', 'শোনাও', 'জোরে পড়ো', 'আবার পড়ো',
+      // Bangla verbs inflect for politeness, and a citizen speaking to a device
+      // may use any register. The label the help screen teaches — পড়ে শোনান —
+      // MUST be in here; it was not, so help was teaching an unmatchable phrase.
+      'পড়ে শোনাও', 'পড়ে শোনান', 'পড়ে শুনান', 'পড়ো', 'পড়ুন', 'শোনাও', 'শোনান', 'জোরে পড়ো', 'আবার পড়ো',
       'read this', 'read it out', 'read aloud', 'speak this', 'read to me',
       'pore shonao', 'porre shonao',
     ],

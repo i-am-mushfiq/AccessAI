@@ -222,13 +222,70 @@ interface Scored {
   readonly quality: MatchQuality;
 }
 
-/** Jaccard overlap on content tokens, 0–1. */
+/**
+ * Levenshtein distance, iterative with a single row.
+ *
+ * Needed because Bangla speech recognition produces SPELLING variants
+ * constantly — নোটিফিকেশন / নোটিফিকেশান, হোম পেজ / হোম পেইজ — and Bangla verbs
+ * inflect for politeness, so the same command arrives as শোনাও, শোনান or শুনান
+ * depending on how respectfully the citizen is speaking to their phone. Exact
+ * token matching rejects all of those.
+ *
+ * Strings here are single words or short phrases, so the O(n·m) cost is nothing.
+ */
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      const substitution = previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1);
+      const insertion = current[j - 1]! + 1;
+      const deletion = previous[j]! + 1;
+      current[j] = Math.min(substitution, insertion, deletion);
+    }
+    previous = current;
+  }
+
+  return previous[b.length]!;
+}
+
+/** 0–1, where 1 is identical. */
+function similarity(a: string, b: string): number {
+  const longest = Math.max(a.length, b.length);
+  if (longest === 0) return 1;
+  return 1 - editDistance(a, b) / longest;
+}
+
+/**
+ * Two tokens count as the same word.
+ *
+ * 0.8 admits a one-character difference in a five-character word — which is
+ * exactly the শোনাও/শোনান case — while still separating short words that merely
+ * rhyme. Deliberately not looser: a false token match on a destructive command
+ * is the failure that matters, and those confirm regardless.
+ */
+const TOKEN_SIMILARITY = 0.8;
+
+/** Jaccard overlap on content tokens, tolerant of near-miss spellings. */
 function overlap(a: readonly string[], b: readonly string[]): number {
   if (a.length === 0 || b.length === 0) return 0;
-  const setB = new Set(b);
+
+  const uniqueA = [...new Set(a)];
+  const uniqueB = [...new Set(b)];
   let shared = 0;
-  for (const token of new Set(a)) if (setB.has(token)) shared += 1;
-  const union = new Set([...a, ...b]).size;
+  for (const token of uniqueA) {
+    if (uniqueB.some((other) => token === other || similarity(token, other) >= TOKEN_SIMILARITY)) {
+      shared += 1;
+    }
+  }
+  // Union approximated as |A| + |B| − shared, since fuzzy equality is not
+  // transitive and a true set union is not well defined here.
+  const union = uniqueA.length + uniqueB.length - shared;
   return union === 0 ? 0 : shared / union;
 }
 
@@ -259,6 +316,14 @@ function scoreCommand(transcript: string, command: VoiceCommand): Scored | null 
       const coverage = phrase.length / Math.max(said.length, 1);
       score = 70 + Math.round(coverage * 22);
       quality = 'contains';
+    } else if (said.length >= 4 && similarity(said, phrase) >= 0.82) {
+      /**
+       * The whole utterance is a near-miss for the phrase — a spelling variant
+       * (নোটিফিকেশান for নোটিফিকেশন) or a different verb ending. Scored below a
+       * containment match, so an exact phrase elsewhere always wins.
+       */
+      score = Math.round(similarity(said, phrase) * 72);
+      quality = 'fuzzy';
     } else if (phrase.includes(said) && said.length >= 3) {
       /**
        * The citizen said a PREFIX or fragment of a longer phrase — "সময়" for
