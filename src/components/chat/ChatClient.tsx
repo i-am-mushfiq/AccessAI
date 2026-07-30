@@ -19,7 +19,7 @@ import { OpportunityCard, type OpportunityCardData } from '@/components/opportun
 import { AiEngineNotice } from './AiEngineNotice';
 import { useToast } from '@/components/providers/ToastProvider';
 import { usePreferences } from '@/components/providers/PreferencesProvider';
-import { useVoice, useVoiceReadable } from '@/components/providers/VoiceProvider';
+import { useVoice, useVoiceReadable, useVoiceActions } from '@/components/providers/VoiceProvider';
 import { SpeakButton } from '@/components/voice/SpeakButton';
 import { formatTimeAgo } from '@/lib/format/dates';
 import type { AiEngine } from '@/lib/domain/enums';
@@ -199,6 +199,28 @@ export function ChatClient({
     turn.mutate(trimmed);
   };
 
+  /**
+   * Clearing the thread. One function for the button and the spoken command, so
+   * the two cannot drift into resetting different amounts of state.
+   *
+   * The draft is deliberately kept. A citizen who has half-typed a question and
+   * then says "নতুন কথা" wants a clean thread, not their own sentence deleted —
+   * and re-typing it is precisely the cost voice input existed to remove.
+   */
+  const startNewConversation = () => {
+    setMessages([]);
+    setConversationId(null);
+    setError(null);
+  };
+
+  /**
+   * `confirm: 'always'` in the registry. Clearing the thread is not undoable from
+   * this screen, and the conversation is the context every following answer is
+   * built on — a mishearing here silently makes the assistant forget what the
+   * citizen already told it about their income and their situation.
+   */
+  useVoiceActions({ 'action.newChat': startNewConversation });
+
   /* ------------------------------------------------------ voice input */
 
   /**
@@ -251,11 +273,7 @@ export function ChatClient({
           size="md"
           fullWidth={false}
           leadingIcon={<Plus size={20} className="icon" />}
-          onClick={() => {
-            setMessages([]);
-            setConversationId(null);
-            setError(null);
-          }}
+          onClick={startNewConversation}
         >
           {t('newConversation')}
         </Button>

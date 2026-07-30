@@ -26,10 +26,17 @@ export function SpeakButton({
   readonly className?: string;
 }) {
   const t = useTranslations('voice');
-  const { speak, silence, speaking, canSpeak, support } = useVoice();
+  const { speak, silence, speaking, canSpeak, support, serverTts } = useVoice();
 
-  // No synthesiser at all: nothing useful to say, so show nothing.
-  if (!support.synthesis) return null;
+  // Nothing anywhere can turn text into sound — not the device, not the server —
+  // so there is no honest control to render.
+  //
+  // The server is checked FIRST and separately from `canSpeak`. Gating on
+  // `support.synthesis` alone hid this button on exactly the devices server
+  // synthesis was built for: a cheap Android browser with no Bangla voice, where
+  // the app could have spoken perfectly well through the server and instead
+  // showed nothing at all.
+  if (!serverTts && !support.synthesis) return null;
 
   if (!canSpeak) {
     return (

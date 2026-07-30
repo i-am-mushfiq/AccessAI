@@ -1,7 +1,8 @@
 import type { NextRequest } from 'next/server';
 import { ok, handle, fail, ERROR_CODES } from '@/lib/http/response';
-import { requireSession } from '@/lib/http/session';
+import { getSession } from '@/lib/http/session';
 import { guardRateLimit } from '@/lib/http/rate-limit';
+import { hasLiveOtpChallenge } from '@/modules/auth/auth.service';
 import { getSttProvider, SttError, describeVoiceCapabilities } from '@/modules/voice/providers';
 
 /**
@@ -33,11 +34,56 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   return handle(async () => {
-    const guard = await requireSession();
-    if (!guard.ok) return guard.response;
+    let form: FormData;
+    try {
+      form = await request.formData();
+    } catch {
+      return fail(ERROR_CODES.VALIDATION_FAILED, 'The recording could not be read. Please try again.', {
+        status: 400,
+      });
+    }
+
+    /* ------------------------------------------------------- who may speak */
+
+    /**
+     * Normally: a signed-in citizen.
+     *
+     * The exception is the sign-in screen itself, and it exists because of a
+     * circularity that would otherwise lock people out. Speaking the six-digit
+     * code is the accessible-authentication route BDS §10.2.5 requires — but
+     * server transcription is the only speech path that works in Firefox and in
+     * `VOICE_MODE=server`, and requiring a session for it means the one screen
+     * where a citizen has no session is the one screen where the microphone is
+     * dead. Someone who cannot read six boxes then cannot get in at all.
+     *
+     * So an unauthenticated clip is accepted ONLY while a live, unconsumed code
+     * challenge exists for the number given. That is a deliberately expensive
+     * door to walk through: it costs a real Bangladeshi mobile number, a
+     * successful SMS send, and the per-number resend cooldown, all of which are
+     * already limited — versus an open endpoint, which costs nothing and bills us
+     * per minute of audio. The clip is still capped, still IP-limited, still
+     * discarded, and grants nothing on its own: `verifyOtp` remains the only
+     * thing that can turn a code into a session, and this path neither consumes
+     * an attempt nor reveals whether the code was right.
+     */
+    const session = await getSession();
+
+    let identity: string | undefined;
+    if (session) {
+      identity = session.userId;
+    } else {
+      const phoneField = form.get('phone');
+      const phone = typeof phoneField === 'string' ? phoneField : '';
+      if (!phone || !(await hasLiveOtpChallenge(phone))) {
+        return fail(ERROR_CODES.UNAUTHENTICATED, 'Please sign in to use voice typing.', { status: 401 });
+      }
+      // Keyed by IP, not by phone: keying on the phone would let one caller
+      // rotate numbers for a fresh budget each time.
+      identity = undefined;
+    }
 
     // Audio is the most expensive input in the system, so it has its own budget.
-    const limited = await guardRateLimit(request, 'voice', guard.session.userId);
+    const limited = await guardRateLimit(request, 'voice', identity);
     if (!limited.ok) return limited.response;
 
     const provider = getSttProvider();
@@ -49,15 +95,6 @@ export async function POST(request: NextRequest) {
         'Voice typing is not available on this server. Your browser can still use its own speech recognition, or you can type instead.',
         { status: 503, details: { reason: 'no_stt_provider' } },
       );
-    }
-
-    let form: FormData;
-    try {
-      form = await request.formData();
-    } catch {
-      return fail(ERROR_CODES.VALIDATION_FAILED, 'The recording could not be read. Please try again.', {
-        status: 400,
-      });
     }
 
     const audio = form.get('audio');

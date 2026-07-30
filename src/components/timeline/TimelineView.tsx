@@ -10,6 +10,8 @@ import { Tabs } from '@/components/primitives/Tabs';
 import { IconButton } from '@/components/primitives/IconButton';
 import { Badge } from '@/components/primitives/Chip';
 import { usePreferences } from '@/components/providers/PreferencesProvider';
+import { ReadAloud } from '@/components/voice/ReadAloud';
+import { speakable, spokenList, countInWords, SPOKEN_LIST_LIMIT } from '@/modules/voice/spoken';
 import {
   formatDate, formatMonthYear, formatRelativeDay, startOfMonth, endOfMonth,
   weekdayShortNames, daysBetween, startOfDay, deadlineUrgency,
@@ -54,6 +56,7 @@ const TYPE_ICONS: Record<string, typeof CalendarClock> = {
 export function TimelineView({ events }: { readonly events: readonly TimelineEntry[] }) {
   const t = useTranslations('timeline');
   const tc = useTranslations('common');
+  const tv = useTranslations('voice');
   const locale = useLocale() as 'bn' | 'en';
   const { numerals } = usePreferences();
 
@@ -62,17 +65,22 @@ export function TimelineView({ events }: { readonly events: readonly TimelineEnt
 
   const today = startOfDay(new Date());
 
-  const typeLabels: Record<string, string> = {
-    deadline: t('typeDeadline'),
-    task: t('typeTask'),
-    reminder: t('typeReminder'),
-    renewal: t('typeRenewal'),
-    training: t('typeTraining'),
-    application_progress: t('typeApplicationProgress'),
-    document_expiry: t('typeDocumentExpiry'),
-    scholarship_window: t('typeScholarshipWindow'),
-    announcement: t('typeAnnouncement'),
-  };
+  // Memoised because the spoken summary depends on it; a fresh object every
+  // render would rebuild that summary on every keystroke elsewhere on the page.
+  const typeLabels = useMemo<Record<string, string>>(
+    () => ({
+      deadline: t('typeDeadline'),
+      task: t('typeTask'),
+      reminder: t('typeReminder'),
+      renewal: t('typeRenewal'),
+      training: t('typeTraining'),
+      application_progress: t('typeApplicationProgress'),
+      document_expiry: t('typeDocumentExpiry'),
+      scholarship_window: t('typeScholarshipWindow'),
+      announcement: t('typeAnnouncement'),
+    }),
+    [t],
+  );
 
   /** Upcoming first, then overdue — what needs doing outranks what was missed. */
   const agenda = useMemo(() => {
@@ -111,17 +119,72 @@ export function TimelineView({ events }: { readonly events: readonly TimelineEnt
     return map;
   }, [cursor, events]);
 
+  /**
+   * The spoken agenda.
+   *
+   * Follows the ACTIVE view rather than always reading the agenda, because
+   * read-aloud is an alternative to looking at the screen, not a separate
+   * feature: hearing next month's deadlines while the month grid shows March
+   * would leave a listener unable to reconcile what they heard with what anyone
+   * beside them can see.
+   *
+   * Overdue items are counted, not listed. Someone who has missed four dates
+   * cannot un-miss them, and spending half a short clip on them delays the part
+   * they can still act on. The count is still spoken, so nothing is hidden — the
+   * screen carries the detail.
+   */
+  const spokenAgenda = useMemo(() => {
+    const forSpeech =
+      view === 'agenda'
+        ? agenda.upcoming
+        : [...monthEvents.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .flatMap(([, dayEvents]) => dayEvents);
+
+    const monthHeading = view === 'month' ? formatMonthYear(cursor, locale, numerals) : null;
+
+    if (forSpeech.length === 0) {
+      return speakable(locale, [monthHeading, t('spokenNothing')]);
+    }
+
+    const lines = forSpeech.map((event) => {
+      const date = new Date(event.eventDate);
+      return [
+        formatRelativeDay(date, locale, { numerals }),
+        locale === 'bn' ? event.titleBn : event.title,
+        typeLabels[event.type] ?? event.type,
+      ].join(' — ');
+    });
+
+    return speakable(locale, [
+      monthHeading,
+      t('spokenUpcoming', { count: countInWords(forSpeech.length, locale) }),
+      spokenList(locale, lines, {
+        limit: SPOKEN_LIST_LIMIT,
+        more: (remaining) => tv('moreNotRead', { count: countInWords(remaining, locale) }),
+      }),
+      // Only in the agenda view — the month grid is not showing past items, so
+      // announcing them there would describe a screen the listener is not on.
+      view === 'agenda' && agenda.past.length > 0
+        ? t('spokenOverdue', { count: countInWords(agenda.past.length, locale) })
+        : null,
+    ]);
+  }, [view, agenda, monthEvents, cursor, locale, numerals, t, tv, typeLabels]);
+
   return (
     <div className="flex flex-col gap-4">
-      <Tabs
-        items={[
-          { value: 'agenda' as const, label: t('viewAgenda'), count: agenda.upcoming.length },
-          { value: 'month' as const, label: t('viewMonth') },
-        ]}
-        value={view}
-        onChange={setView}
-        label={t('title')}
-      />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Tabs
+          items={[
+            { value: 'agenda' as const, label: t('viewAgenda'), count: agenda.upcoming.length },
+            { value: 'month' as const, label: t('viewMonth') },
+          ]}
+          value={view}
+          onChange={setView}
+          label={t('title')}
+        />
+        <ReadAloud text={spokenAgenda} />
+      </div>
 
       {/* ------------------------------------------------------- agenda */}
       {view === 'agenda' ? (

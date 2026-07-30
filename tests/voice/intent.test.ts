@@ -41,10 +41,102 @@ describe('the registry itself is sound', () => {
   it('marks every state-changing command as always-confirm', () => {
     // The core safety invariant of the whole feature, asserted structurally so a
     // future command cannot be added without a confirmation policy.
-    const mutating = ['action.save', 'action.unsave', 'action.applyStarted', 'action.taskDone', 'action.signOut'];
+    const mutating = [
+      'action.save', 'action.unsave', 'action.applyStarted', 'action.taskDone', 'action.signOut',
+      // Neither can be undone from the screen it happens on: one erases the
+      // citizen's record of what they had not dealt with, the other erases the
+      // context every following answer is built on.
+      'action.markAllRead', 'action.newChat',
+    ];
     for (const id of mutating) {
       expect(COMMAND_BY_ID.get(id)?.confirm, id).toBe('always');
     }
+  });
+
+  it('does not confirm a change that is visible and instantly reversible', () => {
+    // Confirming a text-size change would be self-defeating: the citizen asking
+    // for bigger text is the one least able to read the confirmation.
+    for (const id of ['action.biggerText', 'action.smallerText']) {
+      expect(COMMAND_BY_ID.get(id)?.confirm, id).toBe('never');
+    }
+  });
+
+  it('keeps every staff screen behind staffOnly', () => {
+    // A citizen saying "ব্যবহারকারী" must not be routed to user management and
+    // shown a 403 — which reads as the app breaking, not as a boundary.
+    for (const command of VOICE_COMMANDS) {
+      if (command.route?.startsWith('/admin')) {
+        expect(command.staffOnly, command.id).toBe(true);
+        expect(command.auth, command.id).toBe(true);
+      }
+    }
+  });
+
+  it('never gives two commands the same phrase', () => {
+    // A duplicated phrase means one utterance maps to two screens, and which one
+    // wins depends on scoring internals nobody can reason about from outside.
+    const owners = new Map<string, string>();
+    for (const command of VOICE_COMMANDS) {
+      for (const phrase of command.phrases) {
+        const existing = owners.get(phrase);
+        expect(existing, `"${phrase}" is claimed by both ${existing} and ${command.id}`).toBeUndefined();
+        owners.set(phrase, command.id);
+      }
+    }
+  });
+});
+
+describe('admin sub-navigation', () => {
+  const staffCommands = VOICE_COMMANDS.filter((c) => c.route?.startsWith('/admin/'));
+
+  it('covers every admin screen that has one', () => {
+    expect(staffCommands.map((c) => c.route).sort()).toEqual([
+      '/admin/ai-logs',
+      '/admin/moderation',
+      '/admin/organisations',
+      '/admin/programmes',
+      '/admin/rules',
+      '/admin/users',
+    ]);
+  });
+
+  it('routes staff to the admin screen they asked for', () => {
+    expectCommand('কর্মসূচি ব্যবস্থাপনা', 'nav.adminProgrammes', staff);
+    expectCommand('পর্যালোচনা', 'nav.adminModeration', staff);
+    expectCommand('ব্যবহারকারীর তালিকা', 'nav.adminUsers', staff);
+    expectCommand('যোগ্যতার নিয়ম', 'nav.adminRules', staff);
+    expectCommand('এআই লগ', 'nav.adminAiLogs', staff);
+    expectCommand('manage programmes', 'nav.adminProgrammes', { ...staff, locale: 'en' });
+  });
+
+  it('still sends staff to the PUBLIC list when they say the citizen phrase', () => {
+    // The whole reason the admin phrases carry a management verb. If "কর্মসূচি"
+    // started meaning the editor for staff, one word would mean two screens
+    // depending on who said it.
+    expectCommand('কর্মসূচি', 'nav.opportunities', staff);
+    expectCommand('সুযোগ', 'nav.opportunities', staff);
+  });
+
+  it('does not resolve an admin phrase for a citizen at all', () => {
+    // Not a 403 — no match, so the citizen is offered alternatives instead of
+    // being walked into a wall.
+    for (const command of staffCommands) {
+      for (const phrase of command.phrases) {
+        const result = resolveIntent(phrase, citizen);
+        if (result.kind === 'command') {
+          expect(result.command.staffOnly, `"${phrase}" reached a citizen`).not.toBe(true);
+        }
+      }
+    }
+  });
+
+  it('does not let a shift-ending "লগ আউট" land on the log viewer', () => {
+    // "লগ" is a whole token of "লগ আউট", which is why it is not a phrase for the
+    // AI log screen.
+    expectCommand('লগ আউট', 'action.signOut', {
+      ...staff,
+      availableActions: ['action.signOut'],
+    });
   });
 
   it('treats navigation as reversible and does not confirm it', () => {

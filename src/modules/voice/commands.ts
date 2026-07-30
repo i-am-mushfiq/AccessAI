@@ -210,6 +210,101 @@ const NAVIGATION: readonly VoiceCommand[] = [
     labelKey: 'navAdmin',
     phrases: ['অ্যাডমিন', 'প্রশাসন', 'admin', 'administration', 'admin panel'],
   },
+
+  /**
+   * Admin sub-navigation.
+   *
+   * `staffOnly` matters more here than anywhere else: without it a citizen saying
+   * "ব্যবহারকারী" would be routed to a user-management screen and meet a 403,
+   * which reads as the app breaking rather than as a boundary. Filtered out of
+   * resolution entirely, the same word simply does not match.
+   *
+   * The phrases are deliberately NOT the bare nouns from the admin sidebar.
+   * "কর্মসূচি" already takes every citizen to the public programme list, and
+   * duplicating it here would make one utterance mean two different screens
+   * depending on who said it — an ambiguity nobody could debug from the outside.
+   * So the admin forms carry a management verb: কর্মসূচি ব্যবস্থাপনা, not কর্মসূচি.
+   */
+  {
+    id: 'nav.adminProgrammes',
+    kind: 'navigate',
+    confirm: 'never',
+    route: '/admin/programmes',
+    auth: true,
+    staffOnly: true,
+    labelKey: 'navAdminProgrammes',
+    phrases: [
+      'কর্মসূচি ব্যবস্থাপনা', 'কর্মসূচি সম্পাদনা', 'কর্মসূচি যোগ করব', 'প্রোগ্রাম ব্যবস্থাপনা',
+      'manage programmes', 'manage programs', 'edit programmes', 'programme admin', 'add a programme',
+    ],
+  },
+  {
+    id: 'nav.adminOrganisations',
+    kind: 'navigate',
+    confirm: 'never',
+    route: '/admin/organisations',
+    auth: true,
+    staffOnly: true,
+    labelKey: 'navAdminOrganisations',
+    phrases: [
+      'সংস্থা', 'সংস্থার তালিকা', 'দপ্তর', 'দপ্তরের তালিকা',
+      'organisations', 'organizations', 'agencies', 'manage organisations',
+    ],
+  },
+  {
+    id: 'nav.adminRules',
+    kind: 'navigate',
+    confirm: 'never',
+    route: '/admin/rules',
+    auth: true,
+    staffOnly: true,
+    labelKey: 'navAdminRules',
+    phrases: [
+      'যোগ্যতার নিয়ম', 'নিয়ম সম্পাদনা', 'নিয়ম ব্যবস্থাপনা', 'রুল সম্পাদনা',
+      'eligibility rules', 'edit rules', 'rule editor', 'manage rules',
+    ],
+  },
+  {
+    id: 'nav.adminModeration',
+    kind: 'navigate',
+    confirm: 'never',
+    route: '/admin/moderation',
+    auth: true,
+    staffOnly: true,
+    labelKey: 'navAdminModeration',
+    phrases: [
+      'পর্যালোচনা', 'পর্যালোচনার তালিকা', 'অনুমোদনের অপেক্ষা', 'রিভিউ কিউ',
+      'moderation', 'review queue', 'approvals', 'pending review',
+    ],
+  },
+  {
+    id: 'nav.adminUsers',
+    kind: 'navigate',
+    confirm: 'never',
+    route: '/admin/users',
+    auth: true,
+    staffOnly: true,
+    labelKey: 'navAdminUsers',
+    phrases: [
+      'ব্যবহারকারী', 'ব্যবহারকারীর তালিকা', 'ইউজার তালিকা',
+      'users', 'user list', 'manage users', 'accounts',
+    ],
+  },
+  {
+    id: 'nav.adminAiLogs',
+    kind: 'navigate',
+    confirm: 'never',
+    route: '/admin/ai-logs',
+    auth: true,
+    staffOnly: true,
+    labelKey: 'navAdminAiLogs',
+    phrases: [
+      // Bare "লগ" is left out on purpose: it is a whole token of "লগ আউট", and a
+      // staff member ending their shift must not land on a log viewer instead.
+      'এআই লগ', 'উত্তরের লগ', 'মডেলের লগ',
+      'ai logs', 'model logs', 'answer logs',
+    ],
+  },
 ];
 
 /* ------------------------------------------------------- search + filters */
@@ -341,6 +436,58 @@ const ACTIONS: readonly VoiceCommand[] = [
     phrases: [
       'বেরিয়ে যাব', 'সাইন আউট', 'লগ আউট', 'প্রস্থান',
       'sign out', 'log out', 'logout', 'exit my account',
+    ],
+  },
+  {
+    id: 'action.markAllRead',
+    kind: 'action',
+    confirm: 'always',
+    auth: true,
+    labelKey: 'actionMarkAllRead',
+    phrases: [
+      'সব পড়া হয়েছে', 'সব পড়েছি', 'সব দেখা হয়েছে', 'সব বিজ্ঞপ্তি পড়া হয়েছে',
+      'mark all read', 'mark all as read', 'clear notifications', 'read everything',
+    ],
+  },
+  {
+    id: 'action.newChat',
+    kind: 'action',
+    confirm: 'always',
+    auth: true,
+    labelKey: 'actionNewChat',
+    phrases: [
+      'নতুন কথা', 'নতুন কথা শুরু', 'নতুন আলাপ', 'আবার শুরু করব', 'নতুন প্রশ্ন শুরু',
+      'new conversation', 'start over', 'new chat', 'start again',
+    ],
+  },
+
+  /**
+   * Text size, by voice.
+   *
+   * `confirm: 'never'` even though these change stored state, because the
+   * confirmation policy is about CONSEQUENCE and the consequence here is visible,
+   * instantaneous and undone by the opposite command. Worse, confirming would be
+   * self-defeating: the citizen most likely to say "লেখা বড় করো" is the one who
+   * cannot read the confirmation being put in front of them.
+   */
+  {
+    id: 'action.biggerText',
+    kind: 'action',
+    confirm: 'never',
+    labelKey: 'actionBiggerText',
+    phrases: [
+      'লেখা বড় করো', 'লেখা বড় করুন', 'বড় করো', 'আরও বড় করো', 'লেখা ছোট লাগছে',
+      'bigger text', 'larger text', 'increase text size', 'make it bigger', 'zoom in',
+    ],
+  },
+  {
+    id: 'action.smallerText',
+    kind: 'action',
+    confirm: 'never',
+    labelKey: 'actionSmallerText',
+    phrases: [
+      'লেখা ছোট করো', 'লেখা ছোট করুন', 'ছোট করো', 'আগের আকারে ফিরাও',
+      'smaller text', 'decrease text size', 'make it smaller', 'zoom out',
     ],
   },
 ];

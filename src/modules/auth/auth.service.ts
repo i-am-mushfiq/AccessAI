@@ -199,6 +199,44 @@ export async function verifyOtp(rawPhone: string, code: string, purpose: OtpPurp
   return true;
 }
 
+/**
+ * Is this number in the middle of a code entry right now?
+ *
+ * Exists for ONE caller: the transcription endpoint, which otherwise requires a
+ * session and therefore cannot help the citizen who is trying to speak the six
+ * digits that would give them one. See the note on that route for why this is
+ * the boundary chosen — briefly: it costs an attacker a real mobile number and
+ * an SMS send, both already rate-limited, to obtain what an open endpoint would
+ * hand out for nothing.
+ *
+ * Purpose is deliberately NOT part of the predicate. The caller is a microphone
+ * button, not an authentication step: it grants no access, verifies nothing, and
+ * consumes no attempt. Requiring the client to name the flow would only mean
+ * threading `purpose` through the audio upload for no security gain.
+ *
+ * Attempt count is likewise not checked. A citizen who has mistyped the code
+ * three times is precisely the one who needs to speak it instead, and a burnt
+ * challenge still cannot be verified — `verifyOtp` remains the only gate.
+ */
+export async function hasLiveOtpChallenge(rawPhone: string): Promise<boolean> {
+  const phone = normalisePhone(rawPhone);
+  if (!phone) return false;
+
+  const [challenge] = await db
+    .select({ id: otpChallenges.id })
+    .from(otpChallenges)
+    .where(
+      and(
+        eq(otpChallenges.phone, phone),
+        isNull(otpChallenges.consumedAt),
+        gt(otpChallenges.expiresAt, new Date()),
+      ),
+    )
+    .limit(1);
+
+  return challenge !== undefined;
+}
+
 /* ------------------------------------------------------------ register */
 
 export async function register(input: {

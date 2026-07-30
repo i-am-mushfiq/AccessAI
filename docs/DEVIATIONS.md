@@ -246,6 +246,49 @@ or silently non-functional. Requires a voice provider — see [EXTERNAL.md](EXTE
 
 ---
 
+## 13a. Transcription accepts one class of unauthenticated request
+
+`POST /api/v1/voice/transcribe` normally requires a session. It also accepts a clip **with no
+session** when the form carries a `phone` that has a **live, unconsumed OTP challenge**
+(`hasLiveOtpChallenge` in `auth.service.ts`).
+
+This exists because of a circularity. Speaking the six-digit code is the accessible-authentication
+route **BDS §10.2.5** requires, and server transcription is the only speech path that works in
+Firefox or under `VOICE_MODE=server` — so requiring a session made the microphone dead on the one
+screen where nobody has one. A citizen who cannot read six boxes then could not sign in at all.
+
+Why this boundary is defensible:
+
+- Walking through the door costs a real Bangladeshi mobile number, a successful SMS send, and the
+  per-number resend cooldown — all already rate-limited. An open endpoint costs nothing and bills
+  per minute of audio.
+- The clip is still capped at 2 MB, still IP-rate-limited on the `voice` bucket (anonymous callers
+  key by IP, so rotating phone numbers buys no extra budget), and still never stored.
+- It grants nothing. `verifyOtp` remains the only thing that can turn a code into a session. This
+  path does not consume an attempt and does not reveal whether the code was right.
+- Purpose and attempt count are deliberately *not* part of the predicate — the caller is a
+  microphone button, and a citizen who has already mistyped the code three times is precisely the
+  one who needs to speak it.
+
+**If the OTP flow gains a client-held challenge token, switch to it** — that would remove the need to
+send a phone number with the audio at all.
+
+---
+
+## 13b. Voice does not touch the PIN
+
+Dictation is wired into the phone-number and OTP fields (`DictateDigits`) and deliberately **not**
+into the PIN or PIN-confirmation fields. A PIN is a reusable secret; a code is single-use and expires
+in minutes. This audience uses phones in shared rooms, markets, and government office queues, so
+inviting someone to say their PIN aloud would hand it to whoever is standing there — and unlike a
+misheard digit, that is a harm the app cannot undo.
+
+Spoken digits also never auto-submit, unlike typing the sixth digit into `OtpInput`. A challenge
+allows only a few attempts, and spending one on a mishearing the citizen never saw is how voice locks
+someone out of their own account.
+
+---
+
 ## 14. "Similar User Success" ranking factor returns neutral
 
 **PRD §31** allocates 10% of the ranking score to "Similar User Success". That requires historical

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { useMutation } from '@tanstack/react-query';
 import { CheckCheck, CalendarClock, Sparkles, RefreshCw, FileWarning, Bell, ArrowRight } from 'lucide-react';
@@ -10,6 +10,9 @@ import { api } from '@/lib/api/client';
 import { Card } from '@/components/primitives/Card';
 import { Button } from '@/components/primitives/Button';
 import { Badge } from '@/components/primitives/Chip';
+import { ReadAloud } from '@/components/voice/ReadAloud';
+import { useVoiceActions } from '@/components/providers/VoiceProvider';
+import { speakable, spokenList, countInWords, SPOKEN_LIST_LIMIT } from '@/modules/voice/spoken';
 import { formatTimeAgo } from '@/lib/format/dates';
 import type { NotificationType } from '@/lib/domain/enums';
 
@@ -51,11 +54,49 @@ export function NotificationList({
 }) {
   const t = useTranslations('notifications');
   const tc = useTranslations('common');
+  const tv = useTranslations('voice');
   const locale = useLocale() as 'bn' | 'en';
   const router = useRouter();
 
   const [rows, setRows] = useState<NotificationItem[]>([...items]);
   const [unread, setUnread] = useState(initialUnread);
+
+  /**
+   * What read-aloud says here.
+   *
+   * UNREAD ONLY, and that is the whole design. On screen an unread row is bold
+   * with a green dot and a coloured border; in audio those cues do not exist, so
+   * reading everything would bury the four things the citizen has not seen among
+   * forty they have. If nothing is unread the clip says so rather than reading
+   * the archive back.
+   *
+   * Listening does NOT mark anything read. The rule this component already
+   * follows for page views — only an explicit open marks one read — matters more
+   * for voice, not less: a citizen who cannot see the list has no way to notice
+   * their own record of what still needs dealing with being wiped.
+   */
+  const spokenUnread = useMemo(() => {
+    const pending = rows.filter((row) => !row.read);
+    if (pending.length === 0) return speakable(locale, [tv('nothingToRead')]);
+
+    const lines = pending.map((row) =>
+      [
+        locale === 'bn' ? row.titleBn : row.title,
+        locale === 'bn' ? row.bodyBn : row.body,
+      ]
+        .filter((part) => part.trim().length > 0)
+        .join(' — '),
+    );
+
+    return speakable(locale, [
+      t('unreadCount', { count: countInWords(pending.length, locale) }),
+      spokenList(locale, lines, {
+        limit: SPOKEN_LIST_LIMIT,
+        more: (remaining) => tv('moreNotRead', { count: countInWords(remaining, locale) }),
+      }),
+    ]);
+  }, [rows, locale, t, tv]);
+
 
   const markRead = useMutation({
     mutationFn: (input: { ids?: string[]; all?: boolean }) => api.patch('/notifications', input),
@@ -73,6 +114,23 @@ export function NotificationList({
     },
   });
 
+  /**
+   * Marking everything read, by voice.
+   *
+   * `confirm: 'always'` in the registry, and this is one of the clearer cases for
+   * it: the action cannot be undone and it erases the citizen's own record of
+   * what they had not yet dealt with. Registered only while this screen is
+   * mounted, so the phrase never resolves somewhere it would do nothing.
+   */
+  useVoiceActions({
+    'action.markAllRead': () => {
+      // Nothing unread: the mutation would be a no-op write, and the citizen has
+      // already been told "no notifications" by the read-aloud summary.
+      if (unread === 0) return;
+      markRead.mutate({ all: true });
+    },
+  });
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
@@ -81,19 +139,22 @@ export function NotificationList({
         ) : (
           <span className="type-body-md text-text-secondary">{tc('none')}</span>
         )}
-        <Button
-          variant="secondary"
-          size="md"
-          fullWidth={false}
-          disabled={unread === 0}
-          disabledReason={tc('none')}
-          loading={markRead.isPending}
-          loadingLabel={tc('loading')}
-          onClick={() => markRead.mutate({ all: true })}
-          leadingIcon={<CheckCheck size={20} className="icon" />}
-        >
-          {t('markAllRead')}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ReadAloud text={spokenUnread} />
+          <Button
+            variant="secondary"
+            size="md"
+            fullWidth={false}
+            disabled={unread === 0}
+            disabledReason={tc('none')}
+            loading={markRead.isPending}
+            loadingLabel={tc('loading')}
+            onClick={() => markRead.mutate({ all: true })}
+            leadingIcon={<CheckCheck size={20} className="icon" />}
+          >
+            {t('markAllRead')}
+          </Button>
+        </div>
       </div>
 
       <ul className="flex flex-col gap-2">

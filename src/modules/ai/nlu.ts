@@ -2,6 +2,7 @@ import { INTENTS, type Intent, type LifeEvent } from '@/lib/domain/enums';
 import { SEED_LIFE_EVENTS } from '@/lib/db/seed/life-events';
 import { matchDistrict } from '@/lib/domain/geography';
 import { toLatinDigits } from '@/lib/format/numerals';
+import { parseAmount } from '@/lib/format/number-words';
 import type { EligibilityProfile } from '@/modules/eligibility/engine';
 
 /**
@@ -189,42 +190,12 @@ export interface ExtractedEntities {
   readonly fields: readonly string[];
 }
 
-const NUMBER_WORDS_BN: Record<string, number> = {
-  এক: 1, দুই: 2, তিন: 3, চার: 4, পাঁচ: 5, ছয়: 6, সাত: 7, আট: 8, নয়: 9, দশ: 10,
-  বিশ: 20, ত্রিশ: 30, চল্লিশ: 40, পঞ্চাশ: 50, ষাট: 60, সত্তর: 70, আশি: 80, নব্বই: 90,
-};
-
 /**
- * Multipliers a citizen actually uses when stating money. Written out because
- * "5 hazar" and "৫ হাজার" must both become 5000, and "2 lakh" 200000.
+ * Numbers are parsed by the shared `number-words` module, not a second table
+ * here. The duplicate this replaced knew 17 Bangla words and no fraction terms,
+ * so it disagreed with the tested parser on most spoken amounts — see the note on
+ * the income branch below. One vocabulary, one set of tests, one place to fix.
  */
-const MULTIPLIERS: readonly { readonly words: readonly string[]; readonly factor: number }[] = [
-  { words: ['কোটি', 'koti', 'crore'], factor: 10_000_000 },
-  { words: ['লাখ', 'লক্ষ', 'lakh', 'lac'], factor: 100_000 },
-  { words: ['হাজার', 'hazar', 'hajar', 'thousand'], factor: 1_000 },
-  { words: ['শত', 'শ', 'hundred'], factor: 100 },
-];
-
-function parseAmount(segment: string): number | null {
-  const text = normalise(segment);
-  const numeric = text.match(/(\d+(?:\.\d+)?)/);
-  let base: number | null = numeric ? Number(numeric[1]) : null;
-
-  if (base === null) {
-    for (const [word, value] of Object.entries(NUMBER_WORDS_BN)) {
-      if (text.includes(word)) {
-        base = value;
-        break;
-      }
-    }
-  }
-  if (base === null || !Number.isFinite(base)) return null;
-
-  for (const { words, factor } of MULTIPLIERS) {
-    if (words.some((w) => text.includes(normalise(w)))) return Math.round(base * factor);
-  }
-  return Math.round(base);
-}
 
 export function extractEntities(text: string): ExtractedEntities {
   const profile: Partial<EligibilityProfile> = {};
@@ -248,13 +219,27 @@ export function extractEntities(text: string): ExtractedEntities {
   }
 
   /* ---- income ---- */
-  // Requires an income keyword nearby. A bare number in "5000 taka for medicine"
-  // is NOT income, and mis-extracting it would corrupt every future decision.
-  const incomeMatch = haystack.match(
-    /(?:আয়|ইনকাম|income|বেতন|salary|earn|রোজগার)[^০-৯\d]{0,20}((?:\d[\d,.]*|এক|দুই|তিন|চার|পাঁচ)\s*(?:হাজার|লাখ|লক্ষ|শত|thousand|lakh|hazar)?)/,
-  );
-  if (incomeMatch?.[1]) {
-    const amount = parseAmount(incomeMatch[1]);
+  /**
+   * Requires an income keyword nearby. A bare number in "5000 taka for medicine"
+   * is NOT income, and mis-extracting it would corrupt every future decision.
+   *
+   * The keyword anchors a WINDOW which is handed to the shared number parser,
+   * rather than the keyword pattern trying to capture the figure itself. The
+   * previous version did the latter, and its alternation only admitted
+   * এক|দুই|তিন|চার|পাঁচ with the number strictly after the keyword — so it
+   * silently lost "দেড় হাজার", "আড়াই হাজার", "four thousand", and any figure a
+   * citizen stated before the word (মাসে ৪৫০০ টাকা আয়), and it read
+   * "সাড়ে চার হাজার" as 4,000 by dropping the সাড়ে.
+   *
+   * The window looks BOTH ways for exactly that reason, and `parseAmount` does
+   * the disambiguation it was written and tested for — including refusing to
+   * guess when two bare numbers appear with no currency or scale evidence.
+   */
+  const keyword = /আয়|ইনকাম|income|বেতন|salary|earn|রোজগার/.exec(haystack);
+  if (keyword) {
+    const from = Math.max(0, keyword.index - 30);
+    const window = haystack.slice(from, keyword.index + keyword[0].length + 50);
+    const amount = parseAmount(window);
     if (amount !== null && amount >= 0 && amount <= 10_000_000) {
       // Treat a stated figure as monthly unless "বার্ষিক"/"yearly" appears.
       const isYearly = /বার্ষিক|বছরে|yearly|per year|annual/.test(haystack);

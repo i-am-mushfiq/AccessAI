@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   Home, MessageCircle, LayoutGrid, CalendarDays, Bookmark,
@@ -11,8 +11,9 @@ import { cn } from '@/lib/utils/cn';
 import { LocaleSwitcher } from './LocaleSwitcher';
 import { VoiceButton } from '@/components/voice/VoiceButton';
 import { VoiceSheet } from '@/components/voice/VoiceSheet';
-import { useVoice } from '@/components/providers/VoiceProvider';
-import type { UserRole } from '@/lib/domain/enums';
+import { useVoice, useVoiceActions } from '@/components/providers/VoiceProvider';
+import { usePreferences } from '@/components/providers/PreferencesProvider';
+import { TEXT_SCALES, type UserRole } from '@/lib/domain/enums';
 
 /**
  * App shell — BDS §5.3 and §57.
@@ -70,8 +71,46 @@ export function AppShell({
 }: AppShellProps) {
   const t = useTranslations('nav');
   const tv = useTranslations('voice');
+  const tc = useTranslations('common');
   const pathname = usePathname();
   const voice = useVoice();
+  const { textScale, setTextScale } = usePreferences();
+  const { signOut } = useSignOut();
+
+  /**
+   * The actions that belong to the whole app rather than to one screen.
+   *
+   * Sign-out is here because it is the one action that must work from wherever
+   * the citizen happens to be — including a screen they cannot read. It carries
+   * `confirm: 'always'`, so it runs only after an explicit spoken yes, and on
+   * failure the app says so out loud: a voice user never sees the sidebar
+   * button's error line, and silently remaining signed in is exactly the outcome
+   * they need told.
+   *
+   * Text size is here for the same reason, and its result is spoken for a
+   * sharper one — the citizen asking for bigger text is the one least able to
+   * read the screen that would have confirmed it.
+   */
+  const stepTextScale = (direction: 1 | -1) => {
+    const index = TEXT_SCALES.indexOf(textScale);
+    const next = TEXT_SCALES[index + direction];
+
+    if (next === undefined) {
+      voice.speak(direction === 1 ? tv('textSizeMax') : tv('textSizeMin'));
+      return;
+    }
+    setTextScale(next);
+    voice.speak(tv('textSizeNow', { percent: Math.round(next * 100) }));
+  };
+
+  useVoiceActions({
+    'action.signOut': async () => {
+      const ok = await signOut();
+      if (!ok) voice.speak(tc('signOutFailed'));
+    },
+    'action.biggerText': () => stepTextScale(1),
+    'action.smallerText': () => stepTextScale(-1),
+  });
 
   const isStaff = userRole === 'moderator' || userRole === 'administrator' || userRole === 'super_admin';
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
@@ -318,19 +357,64 @@ function SidebarLink({
   );
 }
 
+/**
+ * Ending the session — shared by the sidebar button and the voice command.
+ *
+ * Two details are deliberate. The redirect is a FULL page load, not a
+ * client-side push: it discards the React Query cache along with the cookie, so
+ * the next person to pick up a shared phone cannot press Back and read the
+ * previous citizen's income, disability status or benefit history out of memory.
+ *
+ * And a failed revocation does NOT redirect. Landing on the public home page
+ * looks exactly like success while the cookie is still live — the most
+ * dangerous possible outcome on a shared device. Better to stay put and report
+ * the failure than to imply a safety that does not exist.
+ */
+function useSignOut() {
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const signOut = useCallback(async () => {
+    setPending(true);
+    setFailed(false);
+    try {
+      const response = await fetch('/api/v1/auth/session', {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) throw new Error(`sign out ${response.status}`);
+      window.location.href = '/';
+      return true;
+    } catch {
+      setPending(false);
+      setFailed(true);
+      return false;
+    }
+  }, []);
+
+  return { signOut, pending, failed };
+}
+
 function SignOutButton() {
   const t = useTranslations('common');
+  const { signOut, pending, failed } = useSignOut();
+
   return (
-    <button
-      type="button"
-      onClick={async () => {
-        await fetch('/api/v1/auth/session', { method: 'DELETE', credentials: 'same-origin' });
-        window.location.href = '/';
-      }}
-      className="flex min-h-12 w-full items-center gap-3 rounded-md px-3 type-label-lg text-text-secondary hover:bg-surface-sunken focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
-    >
-      <LogOut size={24} className="icon shrink-0" aria-hidden="true" />
-      {t('signOut')}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => void signOut()}
+        disabled={pending}
+        className="flex min-h-12 w-full items-center gap-3 rounded-md px-3 type-label-lg text-text-secondary hover:bg-surface-sunken focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2 disabled:opacity-60"
+      >
+        <LogOut size={24} className="icon shrink-0" aria-hidden="true" />
+        {t('signOut')}
+      </button>
+      {failed ? (
+        <p role="alert" className="px-3 pt-1 type-caption text-text-error">
+          {t('signOutFailed')}
+        </p>
+      ) : null}
+    </>
   );
 }

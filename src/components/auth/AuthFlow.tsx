@@ -12,6 +12,7 @@ import { Select } from '@/components/primitives/Select';
 import { Banner, InfoPanel } from '@/components/primitives/Banner';
 import { ProgressSteps } from '@/components/primitives/States';
 import { CheckboxRow } from '@/components/primitives/Choice';
+import { DictateDigits } from '@/components/voice/DictateDigits';
 import { DISTRICTS } from '@/lib/domain/geography';
 import { detectOperator, formatPhone, maskPhone, normalisePhone } from '@/lib/format/numerals';
 import type { AppLocale } from '@/i18n/routing';
@@ -45,6 +46,7 @@ export function AuthFlow({ mode, nextPath }: { readonly mode: AuthMode; readonly
   const t = useTranslations('auth');
   const tc = useTranslations('common');
   const te = useTranslations('errors');
+  const tv = useTranslations('voice');
   const locale = useLocale() as AppLocale;
   const router = useRouter();
 
@@ -273,6 +275,20 @@ export function AuthFlow({ mode, nextPath }: { readonly mode: AuthMode; readonly
             maxLength={20}
           />
 
+          {/* Eleven digits is where a lot of people give up. No `phone` is passed
+              here — there is no code challenge yet to authorise a clip against, so
+              this works wherever the browser itself can listen and says why it
+              cannot otherwise. The code field below is the path that matters, and
+              it does have that authorisation. */}
+          <DictateDigits
+            digits={11}
+            label={tv('speakPhone')}
+            onDigits={(value) => {
+              setPhone(value);
+              setFieldErrors({});
+            }}
+          />
+
           {mode === 'login' && !useCodeInstead ? (
             <TextField
               label={t('pinLabel')}
@@ -382,6 +398,29 @@ export function AuthFlow({ mode, nextPath }: { readonly mode: AuthMode; readonly
             onComplete={() => void submitCode()}
             {...(fieldErrors.code ? { error: fieldErrors.code } : {})}
             boxLabel={(n, total) => t('otpBoxLabel', { n, total })}
+          />
+
+          {/* Six digits into six separate boxes — BDS §10.2.5 calls this the most
+              failure-prone screen in the category, and WCAG 2.2 requires an
+              accessible authentication route.
+
+              The spoken code fills the boxes and stops. It deliberately does NOT
+              submit, unlike typing the sixth digit: a challenge allows only a few
+              attempts, and spending one on a mishearing the citizen never got to
+              look at is how voice locks someone out of their own account.
+
+              `phone` goes with the clip because there is no session yet — the
+              server authorises it against the live code challenge for this number
+              (see the note on /api/v1/voice/transcribe). */}
+          <DictateDigits
+            digits={6}
+            label={tv('speakCode')}
+            phone={phone}
+            onDigits={(value) => {
+              setCode(value);
+              setFormError(null);
+              setFieldErrors({});
+            }}
           />
 
           <Button

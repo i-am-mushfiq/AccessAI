@@ -19,6 +19,9 @@ import { EligibilityPill, VerificationBadge, ConfidenceMeter, Badge } from '@/co
 import { Money } from '@/components/primitives/Money';
 import { formatDate, deadlineUrgency, daysUntil } from '@/lib/format/dates';
 import { OpportunityActions } from '@/components/opportunity/OpportunityActions';
+import { ReadAloud } from '@/components/voice/ReadAloud';
+import { speakable, clause, spokenList, countInWords, SPOKEN_LIST_LIMIT } from '@/modules/voice/spoken';
+import { amountInWords } from '@/lib/format/numerals';
 import { districtLabel } from '@/lib/domain/geography';
 import type { EligibilityOutcome } from '@/lib/domain/enums';
 
@@ -40,12 +43,13 @@ export default async function OpportunityDetailPage({
   setRequestLocale(locale);
   const bn = locale === 'bn';
 
-  const [t, te, tt, tc, tp] = await Promise.all([
+  const [t, te, tt, tc, tp, tv] = await Promise.all([
     getTranslations('opportunities'),
     getTranslations('eligibility'),
     getTranslations('trust'),
     getTranslations('common'),
     getTranslations('plan'),
+    getTranslations('voice'),
   ]);
 
   const session = await getFullSession();
@@ -97,6 +101,79 @@ export default async function OpportunityDetailPage({
             ? tt('outdated')
             : tt('disputed');
 
+  /* ------------------------------------------------------ what voice reads */
+
+  /**
+   * The spoken version of this page.
+   *
+   * Ordered by what the listener has to decide, not by how the page is laid out.
+   * The verdict and what is blocking it come BEFORE the description, because a
+   * citizen who is not eligible needs to know that in the first fifteen seconds
+   * rather than after two minutes of programme background.
+   *
+   * Deliberately left out: the trust panel, the source list and related
+   * programmes. Those exist for scrutiny and are worth reading on the screen,
+   * but including them turns a forty-second clip into six minutes, and a clip
+   * nobody finishes is the same as no read-aloud at all.
+   *
+   * The unverified warning is spoken FIRST when it applies. On screen it is a
+   * yellow banner that cannot be missed; in audio there is no colour, so if it
+   * came last a listener who stopped early would act on unchecked data believing
+   * it was confirmed.
+   */
+  const speechLocale = bn ? 'bn' : 'en';
+
+  const periodWord =
+    o.benefitPeriod === 'monthly'
+      ? tc('perMonth')
+      : o.benefitPeriod === 'one_time'
+        ? tc('oneTime')
+        : o.benefitPeriod === 'yearly'
+          ? tc('perYear')
+          : null;
+
+  const spokenDeadline = deadline
+    ? [
+        formatDate(deadline, speechLocale),
+        days === null
+          ? null
+          : days >= 0
+            ? `${countInWords(days, speechLocale)} ${tc('daysLeft')}`
+            : tc('expired'),
+      ]
+        .filter(Boolean)
+        .join(' — ')
+    : tc('noDeadline');
+
+  /** Whatever stands between the citizen and this programme, in one list. */
+  const blockers = [
+    ...item.evaluation.failed.map((c) => (bn ? c.reason.bn : c.reason.en)),
+    ...item.evaluation.unknown.map((c) => (bn ? c.reason.bn : c.reason.en)),
+  ];
+
+  const spokenSummary = speakable(speechLocale, [
+    o.verificationStatus === 'unverified_sample' ? tt('unverifiedSample') : null,
+    title,
+    clause(t('issuedBy'), bn ? item.organization.nameBn : item.organization.name),
+    bn ? o.summaryBn : o.summary,
+    o.benefitAmount !== null
+      ? clause(
+          tc('amount'),
+          // Words, not digits — a misheard amount is the whole reason BDS §10.2.3
+          // asks for the words on screen too.
+          [amountInWords(o.benefitAmount, speechLocale), periodWord].filter(Boolean).join(' '),
+        )
+      : null,
+    clause(tc('deadline'), spokenDeadline),
+    outcomeLabel[item.evaluation.outcome],
+    blockers.length > 0
+      ? spokenList(speechLocale, blockers, {
+          limit: SPOKEN_LIST_LIMIT,
+          more: (remaining) => tv('moreNotRead', { count: countInWords(remaining, speechLocale) }),
+        })
+      : null,
+  ]);
+
   return (
     <article className="flex flex-col gap-8 pb-8">
       {/* ------------------------------------------------------- header */}
@@ -104,6 +181,10 @@ export default async function OpportunityDetailPage({
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone="brand">{o.category.replace(/_/g, ' ')}</Badge>
           <VerificationBadge status={o.verificationStatus} label={verificationLabel} />
+          {/* Near the top, not at the foot of the page: someone who needs this
+              read to them should not have to get past the whole page to find the
+              control that would have read it. */}
+          <ReadAloud text={spokenSummary} className="ms-auto" />
         </div>
 
         <h1 className="type-heading-lg text-text-primary">{title}</h1>

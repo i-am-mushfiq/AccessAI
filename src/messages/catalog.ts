@@ -63,6 +63,12 @@ export const catalog = {
     perYear: ['প্রতি বছর', 'per year'],
     signIn: ['সাইন ইন করুন', 'Sign in'],
     signOut: ['সাইন আউট করুন', 'Sign out'],
+    // Said aloud on the voice path, so it states the consequence plainly rather
+    // than reporting an error: the citizen needs to know they are STILL signed in.
+    signOutFailed: [
+      'সাইন আউট করা যায়নি — আপনি এখনও সাইন ইন করা আছেন। আবার চেষ্টা করুন।',
+      'Could not sign out — you are still signed in. Please try again.',
+    ],
     createAccount: ['নতুন হিসাব খুলুন', 'Create an account'],
     skip: ['এখন নয়', 'Not now'],
     undo: ['ফিরিয়ে নিন', 'Undo'],
@@ -422,6 +428,18 @@ export const catalog = {
     correctIt: ['ভুল শুনেছে? লিখে ঠিক করুন', 'Heard it wrong? Type to correct it'],
     submitCorrection: ['এটাই পাঠান', 'Use this'],
 
+    // ---- speaking a number instead of typing it
+    speakDigits: ['বলে দিন', 'Say it'],
+    speakPhone: ['আপনার মোবাইল নম্বর বলুন', 'Say your mobile number'],
+    speakCode: ['কোডটি বলুন', 'Say the code'],
+    // Names the required length and tells the citizen HOW to say it. The
+    // transcript is appended verbatim by the control, because seeing what was
+    // misheard is the only thing that turns a dead end into a fixable problem.
+    digitsNotUnderstood: [
+      '{count}টি সংখ্যা স্পষ্ট বোঝা যায়নি। একটি একটি করে বলুন। শোনা গেছে:',
+      'Could not make out {count} digits. Say them one at a time. Heard:',
+    ],
+
     // ---- confirmation
     confirmTitle: ['এটা করব?', 'Shall I do this?'],
     confirmYes: ['হ্যাঁ, করুন', 'Yes, do it'],
@@ -497,6 +515,17 @@ export const catalog = {
       'এই ফোনে বাংলা কণ্ঠ নেই, তাই পড়ে শোনানো যাচ্ছে না। ফোনের সেটিংসে বাংলা ভাষার কণ্ঠ যোগ করলে কাজ করবে।',
       'This device has no Bangla voice installed, so it cannot read aloud. Adding a Bangla voice in your device settings will enable it.',
     ],
+    // A list read aloud has no scrollbar. Saying nothing about the items left
+    // out would tell the listener they have heard everything — so the clip ends
+    // by admitting what it skipped and where to find it.
+    moreNotRead: [
+      'আরও {count}টি আছে, পর্দায় দেখতে পারেন',
+      '{count} more are on the screen',
+    ],
+    nothingToRead: [
+      'এই পাতায় পড়ে শোনানোর মতো কিছু নেই',
+      'There is nothing on this page to read out',
+    ],
 
     // ---- help
     helpTitle: ['কী কী বলতে পারেন', 'What you can say'],
@@ -523,6 +552,12 @@ export const catalog = {
     navProfile: ['প্রোফাইল দেখুন', 'Open your profile'],
     navSettings: ['সেটিংসে যান', 'Open settings'],
     navAdmin: ['প্রশাসন পাতায় যান', 'Open the admin area'],
+    navAdminProgrammes: ['কর্মসূচি ব্যবস্থাপনায় যান', 'Manage programmes'],
+    navAdminOrganisations: ['সংস্থার তালিকায় যান', 'Manage organisations'],
+    navAdminRules: ['যোগ্যতার নিয়ম সম্পাদনায় যান', 'Edit eligibility rules'],
+    navAdminModeration: ['পর্যালোচনার তালিকায় যান', 'Open the review queue'],
+    navAdminUsers: ['ব্যবহারকারীর তালিকায় যান', 'Manage users'],
+    navAdminAiLogs: ['এআই লগে যান', 'Open the AI logs'],
     searchOpportunities: ['কর্মসূচি খুঁজুন', 'Search programmes'],
     filterCategory: ['ধরন অনুযায়ী দেখুন', 'Filter by category'],
     filterLifeEvent: ['পরিস্থিতি অনুযায়ী দেখুন', 'Filter by situation'],
@@ -533,6 +568,15 @@ export const catalog = {
     actionTaskDone: ['কাজটি সম্পন্ন বলে চিহ্নিত করুন', 'Mark the task done'],
     actionCheckEligibility: ['আমি যোগ্য কি না দেখুন', 'Check whether you qualify'],
     actionSignOut: ['সাইন আউট করুন', 'Sign out'],
+    actionMarkAllRead: ['সব বিজ্ঞপ্তি পড়া হয়েছে বলে চিহ্নিত করুন', 'Mark every notification as read'],
+    actionNewChat: ['নতুন কথা শুরু করুন', 'Start a new conversation'],
+    actionBiggerText: ['লেখা বড় করুন', 'Make the text bigger'],
+    actionSmallerText: ['লেখা ছোট করুন', 'Make the text smaller'],
+    // Spoken back after a text-size change, because the citizen who asked for it
+    // may not be able to read the result well enough to confirm it worked.
+    textSizeNow: ['লেখার আকার এখন {percent} শতাংশ', 'Text size is now {percent} percent'],
+    textSizeMax: ['লেখা এর চেয়ে বড় করা যায় না', 'The text cannot get any bigger'],
+    textSizeMin: ['লেখা এখন স্বাভাবিক আকারে আছে', 'The text is back to its normal size'],
     metaReadAloud: ['পড়ে শোনান', 'Read this aloud'],
     metaStopReading: ['পড়া থামান', 'Stop reading'],
     metaRepeat: ['আবার বলুন', 'Say that again'],
@@ -634,6 +678,12 @@ export const catalog = {
     typeDocumentExpiry: ['কাগজের মেয়াদ', 'Document expiry'],
     typeScholarshipWindow: ['বৃত্তির সময়', 'Scholarship window'],
     typeAnnouncement: ['ঘোষণা', 'Announcement'],
+    // Spoken openers for read-aloud. The counts come first because "how much is
+    // waiting for me" is the question this screen exists to answer, and a
+    // listener needs it before the list starts.
+    spokenUpcoming: ['সামনে {count}টি কাজ আছে', 'You have {count} things coming up'],
+    spokenOverdue: ['{count}টির সময় পেরিয়ে গেছে', '{count} are past their date'],
+    spokenNothing: ['সামনে কোনো কাজ নেই', 'Nothing is coming up'],
   },
 
   nearby: {

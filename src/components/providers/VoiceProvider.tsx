@@ -59,6 +59,18 @@ export type VoiceState =
 
 export type VoiceActionHandler = (match: IntentMatch) => void | Promise<void>;
 
+export interface DictateOptions {
+  /**
+   * The number being signed in with, when dictating on the sign-in screen.
+   *
+   * Server transcription otherwise requires a session, which the sign-in screen
+   * by definition does not have — so the endpoint accepts a clip while a live
+   * code challenge exists for this number instead. Sent only from that screen;
+   * everywhere else the session cookie is the credential.
+   */
+  readonly phone?: string;
+}
+
 export interface VoiceContextValue {
   readonly state: VoiceState;
   readonly support: VoiceSupport;
@@ -91,7 +103,7 @@ export interface VoiceContextValue {
    * the citizen presses send. Same microphone stack, same server fallback; only
    * the destination differs.
    */
-  dictate(onText: (text: string) => void): void;
+  dictate(onText: (text: string) => void, options?: DictateOptions): void;
   stop(): void;
   cancel(): void;
   confirm(): void;
@@ -149,6 +161,8 @@ export function VoiceProvider({
   const awaitingConfirmRef = useRef(false);
   /** Set while dictating, so a final transcript becomes text instead of a command. */
   const dictationRef = useRef<((text: string) => void) | null>(null);
+  /** Credentials the upload needs when there is no session yet. Cleared after use. */
+  const dictateOptionsRef = useRef<DictateOptions>({});
   /** The currently playing server-synthesised clip, so it can be stopped. */
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -383,6 +397,9 @@ export function VoiceProvider({
       const dictateTo = dictationRef.current;
       if (dictateTo) {
         dictationRef.current = null;
+        // The upload has already happened, so the credential is spent; holding it
+        // would attach a phone number to unrelated clips later in the session.
+        dictateOptionsRef.current = {};
         dictateTo(text);
         setState('idle');
         return;
@@ -432,6 +449,9 @@ export function VoiceProvider({
         const form = new FormData();
         form.append('audio', clip, 'speech.webm');
         form.append('locale', locale);
+        // Only present on the sign-in screen; see DictateOptions.
+        const { phone } = dictateOptionsRef.current;
+        if (phone) form.append('phone', phone);
 
         // FormData must not go through the JSON client, which would stringify it.
         const response = await fetch('/api/v1/voice/transcribe', {
@@ -503,8 +523,9 @@ export function VoiceProvider({
   }, [canListen, locale, process, silence, state, useBrowserRecognition]);
 
   const dictate = useCallback(
-    (onText: (text: string) => void) => {
+    (onText: (text: string) => void, options: DictateOptions = {}) => {
       dictationRef.current = onText;
+      dictateOptionsRef.current = options;
       start();
     },
     [start],
@@ -537,6 +558,7 @@ export function VoiceProvider({
     recordingRef.current = null;
     awaitingConfirmRef.current = false;
     dictationRef.current = null;
+    dictateOptionsRef.current = {};
     setPending(null);
     setInterim('');
     setSuggestions([]);
