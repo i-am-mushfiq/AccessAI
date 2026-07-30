@@ -10,6 +10,7 @@ import { api, ApiError } from '@/lib/api/client';
 import { Card } from '@/components/primitives/Card';
 import { Badge } from '@/components/primitives/Chip';
 import { useToast } from '@/components/providers/ToastProvider';
+import { useVoiceActions } from '@/components/providers/VoiceProvider';
 import { formatRelativeDay, formatDate } from '@/lib/format/dates';
 import { Num } from '@/components/primitives/Money';
 import type { TaskStatus, TaskPriority } from '@/lib/domain/enums';
@@ -59,6 +60,19 @@ export function ActionPlanList({ plans }: { readonly plans: readonly Plan[] }) {
   );
 }
 
+/**
+ * Resolves "কাজটা শেষ" to a specific task.
+ *
+ * Marking work done by voice needs a target, and the only defensible one is the
+ * NEXT outstanding task — the one the citizen is looking at. Guessing among
+ * several would silently tick off the wrong step, and the tracker is the record
+ * they rely on when they get to the office. If nothing is outstanding, the
+ * command reports that instead of doing nothing.
+ */
+function nextPendingTask(tasks: readonly PlanTask[]): PlanTask | null {
+  return tasks.find((task) => task.status !== 'done' && task.status !== 'skipped') ?? null;
+}
+
 function PlanCard({ plan }: { readonly plan: Plan }) {
   const t = useTranslations('plan');
   const tc = useTranslations('common');
@@ -95,6 +109,23 @@ function PlanCard({ plan }: { readonly plan: Plan }) {
       if (input.status === 'done' && done + 1 === total) {
         toast.show({ tone: 'success', message: t('allDone') });
       }
+    },
+  });
+
+  useVoiceActions({
+    'action.taskDone': () => {
+      const target = nextPendingTask(tasks);
+      if (!target) {
+        toast.show({ tone: 'info', message: t('allDone') });
+        return;
+      }
+      toggle.mutate({ taskId: target.id, status: 'done' });
+      // Say WHICH task was ticked. Without it a citizen who cannot read the list
+      // has no way to know whether the right one moved.
+      toast.show({
+        tone: 'success',
+        message: locale === 'bn' ? target.titleBn : target.title,
+      });
     },
   });
 

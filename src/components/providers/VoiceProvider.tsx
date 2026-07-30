@@ -1,0 +1,557 @@
+'use client';
+
+import {
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+  type ReactNode,
+} from 'react';
+import { useRouter, usePathname } from '@/i18n/navigation';
+import { usePreferences } from './PreferencesProvider';
+import {
+  detectVoiceSupport, startRecognition, startRecording, speakLocally, stopSpeaking,
+  textForSpeech, whenVoicesReady, hasBanglaVoice,
+  type RecognitionError, type RecognitionHandle, type VoiceSupport,
+} from '@/lib/voice/speech';
+import { resolveIntent, resolveConfirmation, type IntentResult, type IntentMatch } from '@/modules/voice/intent';
+import type { VoiceCommand } from '@/modules/voice/commands';
+import { api } from '@/lib/api/client';
+
+/**
+ * The voice state machine for the whole app.
+ *
+ * Listening, transcription, intent resolution, confirmation and dispatch live in
+ * ONE place rather than per screen, because the citizen does not think in
+ * screens: "সংরক্ষিত" must work from anywhere, and the microphone must not
+ * behave differently on the chat page than on the timeline.
+ *
+ * Three rules are enforced here rather than left to call sites:
+ *
+ *  1. A state-changing command is NEVER executed on the strength of a transcript
+ *     alone. It moves to `confirming`, the app says what it is about to do, and
+ *     it waits for an explicit yes. Screens register handlers; they do not get to
+ *     opt out of the confirmation.
+ *
+ *  2. Voice is ALWAYS additive. Nothing here removes or replaces a tappable
+ *     control, because a citizen in a shared room, a market, or a government
+ *     office queue cannot speak.
+ *
+ *  3. Every failure is a state with words, not a silent no-op: permission denied,
+ *     no speech heard, unsupported browser, and no provider configured each have
+ *     their own message and their own next step.
+ */
+
+export type VoiceState =
+  | 'idle'
+  /** Microphone open. */
+  | 'listening'
+  /** Clip recorded, waiting on server transcription. */
+  | 'transcribing'
+  /** Understood, waiting for the citizen to confirm a consequential action. */
+  | 'confirming'
+  /** Heard something that is not a command. */
+  | 'unclear'
+  | 'error';
+
+export type VoiceActionHandler = (match: IntentMatch) => void | Promise<void>;
+
+export interface VoiceContextValue {
+  readonly state: VoiceState;
+  readonly support: VoiceSupport;
+  /** Server transcription availability, fetched once. Null until known. */
+  readonly serverStt: boolean | null;
+  /** Whether the microphone can be used at all, by any route. */
+  readonly canListen: boolean;
+  /** Why not, when it cannot. A catalogue key. */
+  readonly unavailableReason: 'disabled' | 'insecure' | 'unsupported' | null;
+  readonly interim: string;
+  readonly transcript: string;
+  readonly lastError: RecognitionError | null;
+  /** The pending action awaiting a yes/no. */
+  readonly pending: IntentMatch | null;
+  readonly suggestions: readonly VoiceCommand[];
+  readonly speaking: boolean;
+  readonly canSpeak: boolean;
+
+  start(): void;
+  /**
+   * Listen for TEXT rather than a command — used by the chat composer.
+   *
+   * Dictation deliberately does not auto-send. A chat message updates the
+   * citizen's profile, and a misheard income produces a confidently wrong
+   * eligibility answer, so the transcript lands in the composer for review and
+   * the citizen presses send. Same microphone stack, same server fallback; only
+   * the destination differs.
+   */
+  dictate(onText: (text: string) => void): void;
+  stop(): void;
+  cancel(): void;
+  confirm(): void;
+  reject(): void;
+  /** Submit a corrected transcript, bypassing the microphone. */
+  submitText(text: string): void;
+  speak(text: string): void;
+  silence(): void;
+  /** Screens declare which on-screen actions exist right now. */
+  registerActions(actions: Record<string, VoiceActionHandler>): () => void;
+  /** What "read this" should read on the current screen. */
+  registerReadable(getText: () => string): () => void;
+  readonly helpVisible: boolean;
+  showHelp(): void;
+  hideHelp(): void;
+}
+
+const VoiceContext = createContext<VoiceContextValue | null>(null);
+
+export function VoiceProvider({
+  children,
+  authenticated,
+  isStaff = false,
+}: {
+  readonly children: ReactNode;
+  readonly authenticated: boolean;
+  readonly isStaff?: boolean;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { locale, voiceEnabled } = usePreferences();
+
+  const [support, setSupport] = useState<VoiceSupport>({
+    recognition: false, recording: false, synthesis: false, banglaVoice: false, secureContext: false,
+  });
+  const [serverStt, setServerStt] = useState<boolean | null>(null);
+  const [state, setState] = useState<VoiceState>('idle');
+  const [interim, setInterim] = useState('');
+  const [transcript, setTranscript] = useState('');
+  const [lastError, setLastError] = useState<RecognitionError | null>(null);
+  const [pending, setPending] = useState<IntentMatch | null>(null);
+  const [suggestions, setSuggestions] = useState<readonly VoiceCommand[]>([]);
+  const [speaking, setSpeaking] = useState(false);
+  const [helpVisible, setHelpVisible] = useState(false);
+
+  const recognitionRef = useRef<RecognitionHandle | null>(null);
+  const recordingRef = useRef<Awaited<ReturnType<typeof startRecording>> | null>(null);
+  const actionsRef = useRef<Record<string, VoiceActionHandler>>({});
+  const readableRef = useRef<(() => string) | null>(null);
+  /** True while a confirmation is open, so the next utterance is read as yes/no. */
+  const awaitingConfirmRef = useRef(false);
+  /** Set while dictating, so a final transcript becomes text instead of a command. */
+  const dictationRef = useRef<((text: string) => void) | null>(null);
+
+  /* ------------------------------------------------------- capabilities */
+
+  useEffect(() => {
+    let cancelled = false;
+    setSupport(detectVoiceSupport());
+
+    // Voices arrive asynchronously; a Bangla voice present on the device is often
+    // invisible on the first synchronous check.
+    void whenVoicesReady().then(() => {
+      if (!cancelled) setSupport((current) => ({ ...current, banglaVoice: hasBanglaVoice() }));
+    });
+
+    // Ask the server once whether it can transcribe, so the microphone can be
+    // disabled with a reason instead of failing on every press.
+    void api
+      .get<{ voice: { serverStt: boolean } }>('/voice/transcribe')
+      .then((data) => {
+        if (!cancelled) setServerStt(data.voice.serverStt);
+      })
+      .catch(() => {
+        if (!cancelled) setServerStt(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const canListen = voiceEnabled && support.secureContext && (support.recognition || (support.recording && serverStt === true));
+
+  const unavailableReason: VoiceContextValue['unavailableReason'] = !voiceEnabled
+    ? 'disabled'
+    : !support.secureContext
+      ? 'insecure'
+      : canListen
+        ? null
+        : 'unsupported';
+
+  const canSpeak = support.synthesis && (locale === 'en' || support.banglaVoice);
+
+  /* ------------------------------------------------------------ speaking */
+
+  const speak = useCallback(
+    (text: string) => {
+      const clean = textForSpeech(text);
+      if (!clean) return;
+      const started = speakLocally(clean, {
+        locale,
+        onEnd: () => setSpeaking(false),
+        onError: () => setSpeaking(false),
+      });
+      setSpeaking(started);
+      // No fallback is attempted silently: if the device cannot pronounce Bangla,
+      // the UI says so rather than reading it with an English voice.
+    },
+    [locale],
+  );
+
+  const silence = useCallback(() => {
+    stopSpeaking();
+    setSpeaking(false);
+  }, []);
+
+  /* ----------------------------------------------------------- dispatch */
+
+  const runCommand = useCallback(
+    async (match: IntentMatch) => {
+      const { command } = match;
+
+      if (command.kind === 'meta') {
+        switch (command.id) {
+          case 'meta.readAloud': {
+            const text = readableRef.current?.();
+            if (text) speak(text);
+            break;
+          }
+          case 'meta.stopReading':
+            silence();
+            break;
+          case 'meta.repeat': {
+            const text = readableRef.current?.();
+            if (text) speak(text);
+            break;
+          }
+          case 'meta.help':
+            setHelpVisible(true);
+            break;
+          case 'meta.back':
+            router.back();
+            break;
+        }
+        setState('idle');
+        return;
+      }
+
+      if (command.kind === 'navigate' && match.href) {
+        // The href already carries the locale prefix from the resolver, and
+        // `router` here is the locale-aware one, so it is stripped to avoid
+        // `/bn/bn/...`.
+        const withoutLocale = match.href.replace(new RegExp(`^/${locale}`), '') || '/';
+        router.push(withoutLocale);
+        setState('idle');
+        return;
+      }
+
+      if (command.kind === 'action') {
+        const handler = actionsRef.current[command.id];
+        if (!handler) {
+          // The screen changed between hearing and acting. Say so rather than
+          // doing nothing.
+          setState('unclear');
+          return;
+        }
+        await handler(match);
+        setState('idle');
+        return;
+      }
+
+      setState('idle');
+    },
+    [locale, router, silence, speak],
+  );
+
+  const handleIntent = useCallback(
+    (result: IntentResult) => {
+      setTranscript(result.transcript);
+
+      if (result.kind === 'unmatched') {
+        setSuggestions(result.suggestions.map((s) => s.command));
+        setState('unclear');
+        return;
+      }
+
+      setSuggestions([]);
+
+      if (result.needsConfirmation) {
+        setPending(result);
+        awaitingConfirmRef.current = true;
+        setState('confirming');
+        return;
+      }
+
+      void runCommand(result);
+    },
+    [runCommand],
+  );
+
+  const process = useCallback(
+    (text: string) => {
+      // Dictation: the words are the payload, not an instruction.
+      const dictateTo = dictationRef.current;
+      if (dictateTo) {
+        dictationRef.current = null;
+        dictateTo(text);
+        setState('idle');
+        return;
+      }
+
+      // Mid-confirmation the utterance is a REPLY, never a new command. Resolving
+      // it as a command here is how "না" could be read as something else and the
+      // refused action performed anyway.
+      if (awaitingConfirmRef.current) {
+        const answer = resolveConfirmation(text);
+        if (answer === 'yes' && pending) {
+          awaitingConfirmRef.current = false;
+          const toRun = pending;
+          setPending(null);
+          void runCommand(toRun);
+          return;
+        }
+        if (answer === 'no') {
+          awaitingConfirmRef.current = false;
+          setPending(null);
+          setState('idle');
+          return;
+        }
+        // Unclear: stay in the confirmation. Silence is never consent.
+        setState('confirming');
+        return;
+      }
+
+      handleIntent(
+        resolveIntent(text, {
+          locale,
+          authenticated,
+          isStaff,
+          availableActions: Object.keys(actionsRef.current),
+        }),
+      );
+    },
+    [authenticated, handleIntent, isStaff, locale, pending, runCommand],
+  );
+
+  /* ---------------------------------------------------------- listening */
+
+  const transcribeOnServer = useCallback(
+    async (clip: Blob) => {
+      setState('transcribing');
+      try {
+        const form = new FormData();
+        form.append('audio', clip, 'speech.webm');
+        form.append('locale', locale);
+
+        // FormData must not go through the JSON client, which would stringify it.
+        const response = await fetch('/api/v1/voice/transcribe', {
+          method: 'POST',
+          body: form,
+          credentials: 'same-origin',
+        });
+        const payload = (await response.json()) as
+          | { success: true; data: { text: string; heardNothing: boolean } }
+          | { success: false; error: { message: string } };
+
+        if (!payload.success) {
+          setLastError({ kind: 'unknown', retryable: true });
+          setState('error');
+          return;
+        }
+        if (payload.data.heardNothing) {
+          setLastError({ kind: 'no-speech', retryable: true });
+          setState('error');
+          return;
+        }
+        process(payload.data.text);
+      } catch {
+        setLastError({ kind: 'network', retryable: true });
+        setState('error');
+      }
+    },
+    [locale, process],
+  );
+
+  const start = useCallback(() => {
+    if (!canListen || state === 'listening' || state === 'transcribing') return;
+
+    setLastError(null);
+    setInterim('');
+    setTranscript('');
+    setSuggestions([]);
+    // Never listen while speaking — the microphone would hear the synthesiser.
+    silence();
+    setState('listening');
+
+    if (support.recognition) {
+      recognitionRef.current = startRecognition(locale, {
+        onInterim: setInterim,
+        onFinal: (text) => {
+          setInterim('');
+          process(text);
+        },
+        onError: (error) => {
+          setLastError(error);
+          setState('error');
+        },
+        onEnd: () => {
+          recognitionRef.current = null;
+        },
+      });
+      return;
+    }
+
+    // No Web Speech: record a clip and send it to the server.
+    void startRecording()
+      .then((handle) => {
+        recordingRef.current = handle;
+      })
+      .catch(() => {
+        setLastError({ kind: 'permission-denied', retryable: false });
+        setState('error');
+      });
+  }, [canListen, locale, process, silence, state, support.recognition]);
+
+  const dictate = useCallback(
+    (onText: (text: string) => void) => {
+      dictationRef.current = onText;
+      start();
+    },
+    [start],
+  );
+
+  const stop = useCallback(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+      return;
+    }
+    const recording = recordingRef.current;
+    if (recording) {
+      recordingRef.current = null;
+      void recording.stop().then((clip) => {
+        if (!clip) {
+          setLastError({ kind: 'no-speech', retryable: true });
+          setState('error');
+          return;
+        }
+        void transcribeOnServer(clip);
+      });
+    }
+  }, [transcribeOnServer]);
+
+  const cancel = useCallback(() => {
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    recordingRef.current?.cancel();
+    recordingRef.current = null;
+    awaitingConfirmRef.current = false;
+    dictationRef.current = null;
+    setPending(null);
+    setInterim('');
+    setSuggestions([]);
+    setState('idle');
+  }, []);
+
+  const confirm = useCallback(() => {
+    if (!pending) return;
+    awaitingConfirmRef.current = false;
+    const toRun = pending;
+    setPending(null);
+    void runCommand(toRun);
+  }, [pending, runCommand]);
+
+  const reject = useCallback(() => {
+    awaitingConfirmRef.current = false;
+    setPending(null);
+    setState('idle');
+  }, []);
+
+  const submitText = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      process(trimmed);
+    },
+    [process],
+  );
+
+  /* --------------------------------------------------------- registries */
+
+  const registerActions = useCallback((actions: Record<string, VoiceActionHandler>) => {
+    actionsRef.current = { ...actionsRef.current, ...actions };
+    const keys = Object.keys(actions);
+    return () => {
+      const next = { ...actionsRef.current };
+      for (const key of keys) delete next[key];
+      actionsRef.current = next;
+    };
+  }, []);
+
+  const registerReadable = useCallback((getText: () => string) => {
+    readableRef.current = getText;
+    return () => {
+      if (readableRef.current === getText) readableRef.current = null;
+    };
+  }, []);
+
+  // A route change invalidates anything mid-flight: a pending "save this" refers
+  // to a screen that is gone, and acting on it would touch the wrong record.
+  useEffect(() => {
+    cancel();
+    silence();
+  }, [pathname, cancel, silence]);
+
+  const value = useMemo<VoiceContextValue>(
+    () => ({
+      state, support, serverStt, canListen, unavailableReason,
+      interim, transcript, lastError, pending, suggestions, speaking, canSpeak,
+      start, dictate, stop, cancel, confirm, reject, submitText, speak, silence,
+      registerActions, registerReadable,
+      helpVisible,
+      showHelp: () => setHelpVisible(true),
+      hideHelp: () => setHelpVisible(false),
+    }),
+    [
+      state, support, serverStt, canListen, unavailableReason, interim, transcript,
+      lastError, pending, suggestions, speaking, canSpeak, start, dictate, stop, cancel,
+      confirm, reject, submitText, speak, silence, registerActions, registerReadable, helpVisible,
+    ],
+  );
+
+  return <VoiceContext.Provider value={value}>{children}</VoiceContext.Provider>;
+}
+
+export function useVoice(): VoiceContextValue {
+  const context = useContext(VoiceContext);
+  if (!context) throw new Error('useVoice must be used inside a VoiceProvider');
+  return context;
+}
+
+/**
+ * Declares the voice actions a screen supports, for as long as it is mounted.
+ *
+ * `resolveIntent` is given these ids, so "সেভ করো" is only ever offered on a
+ * screen that can actually save something — a command that resolves and then
+ * finds no handler is a dead end the citizen cannot diagnose.
+ */
+export function useVoiceActions(actions: Record<string, VoiceActionHandler>): void {
+  const { registerActions } = useVoice();
+  // The identity of the handler object changes every render; the ids do not.
+  const signature = Object.keys(actions).sort().join('|');
+  const latest = useRef(actions);
+  latest.current = actions;
+
+  useEffect(() => {
+    const stable: Record<string, VoiceActionHandler> = {};
+    for (const id of signature.split('|').filter(Boolean)) {
+      stable[id] = (match) => latest.current[id]?.(match);
+    }
+    return registerActions(stable);
+  }, [signature, registerActions]);
+}
+
+/** Declares what "read this aloud" reads on the current screen. */
+export function useVoiceReadable(getText: () => string): void {
+  const { registerReadable } = useVoice();
+  const latest = useRef(getText);
+  latest.current = getText;
+
+  useEffect(() => registerReadable(() => latest.current()), [registerReadable]);
+}

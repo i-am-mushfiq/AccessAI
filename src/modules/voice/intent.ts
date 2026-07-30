@@ -442,14 +442,36 @@ export function resolveConfirmation(transcript: string): 'yes' | 'no' | 'unclear
   const yes = COMMAND_BY_ID.get('meta.yes')!;
   const no = COMMAND_BY_ID.get('meta.no')!;
 
-  const matches = (command: VoiceCommand): boolean =>
-    command.phrases.some((phrase) => {
+  /**
+   * A single-word reply matches only if EVERY word spoken belongs to that
+   * reply's vocabulary.
+   *
+   * A token-anywhere rule is not safe enough. "সেভ করো" ("save it") is two tokens
+   * and contains "করো", a yes-word — so during a confirmation for *unsaving*,
+   * that sentence would have approved the unsave. Requiring the whole utterance
+   * to be affirmative keeps "হ্যাঁ করো" working while rejecting any sentence
+   * carrying other meaning. Multi-word phrases ("করো না", "cancel that") still
+   * match by containment, since they are unambiguous alone.
+   *
+   * There is deliberately NO filler allowance. A first attempt permitted neutral
+   * words like "ok", which then matched EVERY token of the utterance "ok" against
+   * the *no* vocabulary as well and turned a plain yes into a refusal. Anything
+   * not clearly affirmative or negative returns `unclear` and re-prompts, which
+   * costs one extra second and cannot act against the citizen's wishes.
+   */
+  const matches = (command: VoiceCommand): boolean => {
+    const single = new Set<string>();
+    for (const phrase of command.phrases) {
       const needle = normalise(phrase);
       if (said === needle) return true;
-      // Multi-word phrases ("cancel that", "করো না") match by containment.
-      if (needle.includes(' ')) return said.includes(needle);
-      return spoken.length <= 3 && spokenSet.has(needle);
-    });
+      if (needle.includes(' ')) {
+        if (said.includes(needle)) return true;
+      } else {
+        single.add(needle);
+      }
+    }
+    return spoken.length > 0 && spoken.every((token) => single.has(token));
+  };
 
   if (matches(no)) return 'no';
   if (matches(yes)) return 'yes';

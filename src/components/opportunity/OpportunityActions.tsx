@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { useMutation } from '@tanstack/react-query';
 import { Bookmark, BookmarkCheck, ClipboardList, ExternalLink, Flag } from 'lucide-react';
 import { useRouter } from '@/i18n/navigation';
+import { useVoiceActions } from '@/components/providers/VoiceProvider';
 import { api, ApiError } from '@/lib/api/client';
 import { Button } from '@/components/primitives/Button';
 import { Card } from '@/components/primitives/Card';
@@ -94,6 +95,36 @@ export function OpportunityActions({
     },
     onError: (error) =>
       toast.show({ tone: 'error', message: error instanceof ApiError ? error.message : te('genericBody') }),
+  });
+
+  /**
+   * The voice commands this screen can honour, declared while it is mounted.
+   *
+   * Registering them here rather than globally is what makes "সেভ করো" resolve
+   * only where something can actually be saved — a command that matches and then
+   * finds no handler is a dead end the citizen cannot diagnose. The confirmation
+   * for each of these is enforced by the registry, not by this call site.
+   */
+  useVoiceActions({
+    'action.save': () => {
+      if (current) {
+        toast.show({ tone: 'info', message: tc('saved') });
+        return;
+      }
+      save.mutate();
+    },
+    'action.unsave': () => {
+      if (current) unsave.mutate(current.id);
+    },
+    'action.applyStarted': () => {
+      if (current) updateStatus.mutate('applied');
+      else save.mutate();
+    },
+    'action.checkEligibility': () => {
+      // Scrolling beats navigating: the trace is already on this page, and a
+      // citizen who asked by voice may not be able to find it visually.
+      document.getElementById('eligibility')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
   });
 
   const report = useMutation({

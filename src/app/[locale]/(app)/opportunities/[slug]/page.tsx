@@ -178,6 +178,9 @@ export default async function OpportunityDetailPage({
       </dl>
 
       {/* --------------------------------------------------- eligibility */}
+      {/* Anchor for the "আমি কি পাব" voice command, which scrolls here rather
+          than navigating — the trace is already on this page. */}
+      <div id="eligibility" />
       <Section title={t('detailEligibility')}>
         <Card padding="default" className="flex flex-col gap-5">
           <div className="flex flex-wrap items-center justify-between gap-3">

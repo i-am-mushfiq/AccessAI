@@ -4,11 +4,14 @@ import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   Home, MessageCircle, LayoutGrid, CalendarDays, Bookmark,
-  Bell, User, Settings, Shield, MapPin, LogOut,
+  Bell, User, Settings, Shield, MapPin, LogOut, HelpCircle,
 } from 'lucide-react';
 import { Link, usePathname } from '@/i18n/navigation';
 import { cn } from '@/lib/utils/cn';
 import { LocaleSwitcher } from './LocaleSwitcher';
+import { VoiceButton } from '@/components/voice/VoiceButton';
+import { VoiceSheet } from '@/components/voice/VoiceSheet';
+import { useVoice } from '@/components/providers/VoiceProvider';
 import type { UserRole } from '@/lib/domain/enums';
 
 /**
@@ -66,7 +69,9 @@ export function AppShell({
   hideBottomNav = false,
 }: AppShellProps) {
   const t = useTranslations('nav');
+  const tv = useTranslations('voice');
   const pathname = usePathname();
+  const voice = useVoice();
 
   const isStaff = userRole === 'moderator' || userRole === 'administrator' || userRole === 'super_admin';
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
@@ -120,6 +125,18 @@ export function AppShell({
         </nav>
 
         <div className="border-t border-stroke-subtle p-3">
+          {/* Voice sits with navigation, not hidden in settings: it IS a way to
+              navigate, and burying it makes it undiscoverable for the people who
+              need it most. */}
+          <VoiceButton className="mb-2 w-full" />
+          <button
+            type="button"
+            onClick={voice.showHelp}
+            className="mb-1 flex min-h-12 w-full items-center gap-3 rounded-md px-3 type-label-lg text-text-secondary hover:bg-surface-sunken focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
+          >
+            <HelpCircle size={24} className="icon shrink-0" aria-hidden="true" />
+            {tv('helpTitle')}
+          </button>
           <div className="flex items-center gap-3 px-2 py-2">
             <span
               aria-hidden="true"
@@ -173,6 +190,26 @@ export function AppShell({
       >
         {children}
       </main>
+
+      {/**
+       * Mobile microphone.
+       *
+       * Floating above the bottom navigation rather than inside it: the bottom bar
+       * is capped at five items (BDS §1.1 law 12), and a sixth squeezed in would
+       * shrink every target below the 48 dp minimum. Positioned clear of the nav
+       * and the safe-area inset so a thumb cannot hit both at once.
+       */}
+      <div
+        className={cn(
+          'fixed inset-x-0 z-appbar flex justify-center px-4 lg:hidden',
+          hideBottomNav ? 'bottom-4 pb-safe' : 'bottom-bottomnav mb-3 pb-safe',
+        )}
+      >
+        <VoiceButton />
+      </div>
+
+      {/* Listening, confirmation, correction, error and help surfaces. */}
+      <VoiceSheet />
 
       {/* ---------- mobile bottom nav ---------- */}
       {hideBottomNav ? null : (

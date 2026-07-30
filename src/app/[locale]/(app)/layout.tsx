@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import { setRequestLocale } from 'next-intl/server';
 import { AppShell } from '@/components/layout/AppShell';
+import { VoiceProvider } from '@/components/providers/VoiceProvider';
 import { getFullSession } from '@/lib/http/session';
 import { unreadCount } from '@/modules/citizen/citizen.service';
 
@@ -28,9 +29,22 @@ export default async function AppLayout({
 
   const unread = await unreadCount(session.userId);
 
+  const isStaff =
+    session.user.role === 'moderator' ||
+    session.user.role === 'administrator' ||
+    session.user.role === 'super_admin';
+
   return (
-    <AppShell userName={session.user.name} userRole={session.user.role} unreadCount={unread}>
-      {children}
-    </AppShell>
+    /**
+     * Voice wraps the whole authenticated shell rather than any single screen,
+     * because the citizen does not think in screens: "সংরক্ষিত" has to work from
+     * wherever they happen to be, and the microphone must not behave differently
+     * on chat than on the timeline.
+     */
+    <VoiceProvider authenticated isStaff={isStaff}>
+      <AppShell userName={session.user.name} userRole={session.user.role} unreadCount={unread}>
+        {children}
+      </AppShell>
+    </VoiceProvider>
   );
 }

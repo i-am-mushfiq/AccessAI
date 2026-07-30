@@ -398,6 +398,131 @@ export const catalog = {
     ruleVersion: ['নিয়মের সংস্করণ', 'Rule version'],
   },
 
+  /**
+   * Voice. Every string here is spoken to, or read by, someone who may not be
+   * able to read the screen — so each one says what happened and what to do next,
+   * never just what went wrong.
+   */
+  voice: {
+    // ---- the control itself
+    button: ['কথা বলে চালান', 'Use your voice'],
+    buttonShort: ['বলুন', 'Speak'],
+    listening: ['শুনছি…', 'Listening…'],
+    listeningHint: ['বলুন — যেমন "সংরক্ষিত" বা "কাছের অফিস"', 'Speak — for example "saved" or "nearby office"'],
+    stopListening: ['থামান', 'Stop'],
+    transcribing: ['যা বললেন তা বোঝা হচ্ছে…', 'Working out what you said…'],
+    cancel: ['বাতিল', 'Cancel'],
+
+    // ---- what it heard
+    heard: ['আপনি বলেছেন', 'You said'],
+    heardNothing: [
+      'কিছু শোনা যায়নি। বোতাম চেপে ধরে আবার বলুন।',
+      'Nothing was heard. Press and hold, then speak again.',
+    ],
+    correctIt: ['ভুল শুনেছে? লিখে ঠিক করুন', 'Heard it wrong? Type to correct it'],
+    submitCorrection: ['এটাই পাঠান', 'Use this'],
+
+    // ---- confirmation
+    confirmTitle: ['এটা করব?', 'Shall I do this?'],
+    confirmYes: ['হ্যাঁ, করুন', 'Yes, do it'],
+    confirmNo: ['না, থাক', 'No, cancel'],
+    confirmSpokenHint: ['"হ্যাঁ" বা "না" বলতে পারেন', 'You can say "yes" or "no"'],
+    confirmUnclear: [
+      'বুঝতে পারিনি। "হ্যাঁ" বা "না" বলুন, অথবা বোতাম চাপুন।',
+      'That was not clear. Say "yes" or "no", or use a button.',
+    ],
+
+    // ---- not understood
+    unclearTitle: ['এটা বুঝতে পারিনি', 'I did not understand that'],
+    unclearBody: [
+      'আপনি এগুলোর একটি বলতে চেয়েছিলেন?',
+      'Did you mean one of these?',
+    ],
+    askInstead: ['প্রশ্ন হিসেবে জিজ্ঞাসা করুন', 'Ask it as a question instead'],
+    tryAgain: ['আবার বলুন', 'Try again'],
+
+    // ---- errors, each with its own next step
+    permissionDenied: [
+      'মাইক্রোফোন ব্যবহারের অনুমতি নেই। ব্রাউজারের সেটিংসে অনুমতি দিন, অথবা লিখে চালান।',
+      'Microphone permission was refused. Allow it in your browser settings, or type instead.',
+    ],
+    noMicrophone: [
+      'কোনো মাইক্রোফোন পাওয়া যায়নি। লিখে চালাতে পারেন।',
+      'No microphone was found. You can type instead.',
+    ],
+    networkError: [
+      'সংযোগ পাওয়া যাচ্ছে না। একটু পরে আবার চেষ্টা করুন।',
+      'No connection. Please try again in a moment.',
+    ],
+    genericError: ['কিছু একটা সমস্যা হয়েছে। আবার চেষ্টা করুন।', 'Something went wrong. Please try again.'],
+
+    // ---- unavailable states, stated rather than hidden
+    unsupported: [
+      'এই ব্রাউজারে কথা বলে চালানো যায় না। ক্রোম ব্রাউজারে চেষ্টা করুন, অথবা লিখে চালান।',
+      'This browser cannot listen. Try Chrome, or type instead.',
+    ],
+    insecure: [
+      'নিরাপদ সংযোগ (HTTPS) ছাড়া মাইক্রোফোন ব্যবহার করা যায় না।',
+      'The microphone needs a secure (HTTPS) connection.',
+    ],
+    disabledInSettings: [
+      'সেটিংসে ভয়েস বন্ধ আছে। চালু করতে সেটিংসে যান।',
+      'Voice is switched off in Settings. Turn it on there to use it.',
+    ],
+
+    // ---- read aloud
+    readAloud: ['পড়ে শোনান', 'Read aloud'],
+    stopReading: ['পড়া থামান', 'Stop reading'],
+    reading: ['পড়ছি…', 'Reading…'],
+    noBanglaVoice: [
+      'এই ফোনে বাংলা কণ্ঠ নেই, তাই পড়ে শোনানো যাচ্ছে না। ফোনের সেটিংসে বাংলা ভাষার কণ্ঠ যোগ করলে কাজ করবে।',
+      'This device has no Bangla voice installed, so it cannot read aloud. Adding a Bangla voice in your device settings will enable it.',
+    ],
+
+    // ---- help
+    helpTitle: ['কী কী বলতে পারেন', 'What you can say'],
+    helpIntro: [
+      'যেকোনো পাতা থেকে এগুলো বলতে পারেন। যা কিছু বদলে দেবে, তার আগে জিজ্ঞাসা করা হবে।',
+      'You can say these from any page. Anything that changes something will ask you first.',
+    ],
+    helpGroupNavigate: ['যেখানে যেতে চান', 'Going somewhere'],
+    helpGroupAction: ['যা করতে চান', 'Doing something'],
+    helpGroupMeta: ['ভয়েস নিয়ন্ত্রণ', 'Voice controls'],
+    helpConfirmNote: [
+      'এগুলোর আগে সবসময় নিশ্চিত করা হবে',
+      'These always ask for confirmation first',
+    ],
+
+    // ---- command labels, shown in help and in the confirmation
+    navDashboard: ['প্রথম পাতায় যান', 'Go to the home page'],
+    navChat: ['প্রশ্ন করুন', 'Ask a question'],
+    navOpportunities: ['কর্মসূচির তালিকা দেখুন', 'Browse programmes'],
+    navSaved: ['সংরক্ষিত তালিকা দেখুন', 'Open your saved list'],
+    navTimeline: ['সময়সূচি ও শেষ তারিখ দেখুন', 'Open your timeline and deadlines'],
+    navNearby: ['কাছের অফিস খুঁজুন', 'Find nearby offices'],
+    navNotifications: ['বিজ্ঞপ্তি দেখুন', 'Open notifications'],
+    navProfile: ['প্রোফাইল দেখুন', 'Open your profile'],
+    navSettings: ['সেটিংসে যান', 'Open settings'],
+    navAdmin: ['প্রশাসন পাতায় যান', 'Open the admin area'],
+    searchOpportunities: ['কর্মসূচি খুঁজুন', 'Search programmes'],
+    filterCategory: ['ধরন অনুযায়ী দেখুন', 'Filter by category'],
+    filterLifeEvent: ['পরিস্থিতি অনুযায়ী দেখুন', 'Filter by situation'],
+    filterDistrict: ['জেলা অনুযায়ী দেখুন', 'Filter by district'],
+    actionSave: ['এই কর্মসূচি সংরক্ষণ করুন', 'Save this programme'],
+    actionUnsave: ['তালিকা থেকে সরিয়ে দিন', 'Remove it from your list'],
+    actionApplyStarted: ['আবেদন করেছি বলে চিহ্নিত করুন', 'Mark it as applied'],
+    actionTaskDone: ['কাজটি সম্পন্ন বলে চিহ্নিত করুন', 'Mark the task done'],
+    actionCheckEligibility: ['আমি যোগ্য কি না দেখুন', 'Check whether you qualify'],
+    actionSignOut: ['সাইন আউট করুন', 'Sign out'],
+    metaReadAloud: ['পড়ে শোনান', 'Read this aloud'],
+    metaStopReading: ['পড়া থামান', 'Stop reading'],
+    metaRepeat: ['আবার বলুন', 'Say that again'],
+    metaHelp: ['কী কী বলা যায় দেখুন', 'Show what you can say'],
+    metaBack: ['আগের পাতায় ফিরুন', 'Go back'],
+    metaYes: ['হ্যাঁ', 'Yes'],
+    metaNo: ['না', 'No'],
+  },
+
   trust: {
     confidence: ['আস্থার মাত্রা', 'Confidence'],
     high: ['উচ্চ', 'High'],

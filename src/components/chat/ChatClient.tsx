@@ -19,6 +19,8 @@ import { OpportunityCard, type OpportunityCardData } from '@/components/opportun
 import { AiEngineNotice } from './AiEngineNotice';
 import { useToast } from '@/components/providers/ToastProvider';
 import { usePreferences } from '@/components/providers/PreferencesProvider';
+import { useVoice, useVoiceReadable } from '@/components/providers/VoiceProvider';
+import { SpeakButton } from '@/components/voice/SpeakButton';
 import { formatTimeAgo } from '@/lib/format/dates';
 import type { AiEngine } from '@/lib/domain/enums';
 
@@ -114,26 +116,30 @@ export function ChatClient({
   const toast = useToast();
   const queryClient = useQueryClient();
 
+  const voice = useVoice();
+
   const [messages, setMessages] = useState<ChatMessage[]>([...initialMessages]);
   const [conversationId, setConversationId] = useState(initialConversationId);
   const [draft, setDraft] = useState('');
   const [waitingLong, setWaitingLong] = useState(false);
   const [degraded, setDegraded] = useState(false);
-  const [listening, setListening] = useState(false);
-  const [voiceSupported, setVoiceSupported] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const recognitionRef = useRef<{ start: () => void; stop: () => void } | null>(null);
   const longTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    setVoiceSupported(
-      typeof window !== 'undefined' &&
-        ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window),
-    );
-  }, []);
+  const listening = voice.state === 'listening';
+  const voiceSupported = voice.canListen;
+
+  /**
+   * What "পড়ে শোনাও" reads on this screen: the most recent assistant reply.
+   *
+   * Registered rather than hard-wired, so the same spoken command reads the right
+   * thing on every screen.
+   */
+  const lastAssistantMessage = [...messages].reverse().find((m) => m.role === 'assistant');
+  useVoiceReadable(() => lastAssistantMessage?.content ?? '');
 
   const scrollToEnd = useCallback(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -195,53 +201,28 @@ export function ChatClient({
 
   /* ------------------------------------------------------ voice input */
 
-  const toggleVoice = () => {
-    if (!voiceSupported) return;
-    if (listening) {
-      recognitionRef.current?.stop();
-      setListening(false);
+  /**
+   * Dictation now goes through the shared voice layer rather than a second copy
+   * of the Web Speech API that used to live here.
+   *
+   * That copy had no fallback, so it silently did nothing on the browsers most of
+   * this audience actually uses — Firefox, and any Android WebView, meaning every
+   * link opened inside Facebook or WhatsApp. The shared layer tries Web Speech
+   * first and falls back to recording a clip for server transcription.
+   *
+   * The transcript lands in the composer instead of sending: a chat message
+   * updates the profile, and a misheard income figure would produce a
+   * confidently wrong eligibility answer. The citizen reads it, then sends.
+   */
+  const dictateIntoComposer = () => {
+    if (voice.state === 'listening') {
+      voice.stop();
       return;
     }
-
-    const Ctor =
-      (window as unknown as { SpeechRecognition?: new () => never; webkitSpeechRecognition?: new () => never })
-        .SpeechRecognition ??
-      (window as unknown as { webkitSpeechRecognition?: new () => never }).webkitSpeechRecognition;
-    if (!Ctor) return;
-
-    const recognition = new Ctor() as unknown as {
-      lang: string;
-      continuous: boolean;
-      interimResults: boolean;
-      start: () => void;
-      stop: () => void;
-      onresult: (event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void;
-      onerror: () => void;
-      onend: () => void;
-    };
-
-    // bn-BD where the citizen is reading Bangla; the recogniser is far more
-    // accurate with the right language tag than with a generic default.
-    recognition.lang = locale === 'bn' ? 'bn-BD' : 'en-IN';
-    recognition.continuous = false;
-    recognition.interimResults = true;
-
-    recognition.onresult = (event) => {
-      let transcript = '';
-      for (let i = 0; i < event.results.length; i += 1) {
-        transcript += event.results[i]?.[0]?.transcript ?? '';
-      }
-      setDraft(transcript);
-    };
-    recognition.onerror = () => {
-      setListening(false);
-      toast.show({ tone: 'warning', message: t('voiceUnsupported') });
-    };
-    recognition.onend = () => setListening(false);
-
-    recognitionRef.current = recognition;
-    recognition.start();
-    setListening(true);
+    voice.dictate((text) => {
+      setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text));
+      textareaRef.current?.focus();
+    });
   };
 
   /* -------------------------------------------------------- feedback */
@@ -398,7 +379,7 @@ export function ChatClient({
               label={listening ? t('voiceStop') : t('voiceStart')}
               variant={listening ? 'filled' : 'plain'}
               size="lg"
-              onClick={toggleVoice}
+              onClick={dictateIntoComposer}
               icon={
                 listening ? (
                   <MicOff size={24} className="icon text-ramp-error-600" />
@@ -566,6 +547,9 @@ function MessageBubble({
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2 border-t border-stroke-subtle pt-3">
+          {/* First in the row, deliberately. For a citizen who cannot read the
+              answer, this is not a secondary action — it is how they receive it. */}
+          <SpeakButton text={message.content} />
           <button
             type="button"
             onClick={() => onFeedback('helpful')}
