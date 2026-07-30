@@ -228,9 +228,100 @@ export function VoiceSheet() {
         </Banner>
       </Sheet>
 
+      {/* --------------------------------------- listening unavailable */}
+      <UnavailableSheet />
+
       {/* -------------------------------------------------------- help */}
       <VoiceHelpSheet open={helpVisible} onClose={hideHelp} />
     </>
+  );
+}
+
+/**
+ * Why the microphone cannot be used here — and the way round it.
+ *
+ * The important half is the typed-command box. Voice NAVIGATION is deterministic
+ * phrase matching, so it needs no microphone, no API key and no network: typing
+ * "সংরক্ষিত" routes exactly as saying it would. That keeps the whole command
+ * layer usable on a browser with no speech recognition, and makes it testable
+ * without one.
+ *
+ * The capability readout at the bottom exists so the next person to ask "why
+ * doesn't the button work?" can answer it from the screen instead of the source.
+ */
+function UnavailableSheet() {
+  const t = useTranslations('voice');
+  const tc = useTranslations('common');
+  const { state, cancel, submitText, unavailableReason, support, serverStt, showHelp } = useVoice();
+  const [typed, setTyped] = useState('');
+
+  const reasonKey =
+    unavailableReason === 'disabled' ? 'disabledInSettings'
+    : unavailableReason === 'insecure' ? 'insecure'
+    : 'unsupported';
+
+  const capability = (label: string, ok: boolean) => (
+    <li className="flex items-center justify-between gap-3">
+      <span className="type-body-md text-text-secondary">{label}</span>
+      <span className={ok ? 'type-label-md text-text-success' : 'type-label-md text-text-secondary'}>
+        {ok ? tc('yes') : tc('no')}
+      </span>
+    </li>
+  );
+
+  return (
+    <Sheet
+      open={state === 'unavailable'}
+      onClose={cancel}
+      title={t('typeInstead')}
+      closeLabel={tc('close')}
+      footer={
+        <div className="flex flex-col gap-3">
+          <Button
+            onClick={() => {
+              submitText(typed);
+              setTyped('');
+            }}
+            disabled={typed.trim().length === 0}
+          >
+            {t('runCommand')}
+          </Button>
+          <Button variant="tertiary" onClick={showHelp}>
+            {t('helpTitle')}
+          </Button>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <Banner tone="info" statusWord={tc('appName')}>
+          {t(reasonKey)}
+        </Banner>
+
+        <p className="type-body-md text-text-secondary">{t('typeInsteadBody')}</p>
+
+        <Textarea
+          label={t('typeCommandLabel')}
+          helper={t('typeCommandHelper')}
+          value={typed}
+          onChange={(event) => setTyped(event.target.value)}
+          rows={2}
+        />
+
+        <details className="rounded-md border border-stroke-subtle bg-surface-sunken p-3">
+          <summary className="type-label-md cursor-pointer text-text-secondary">
+            {t('capabilities')}
+          </summary>
+          <ul className="mt-2 flex flex-col gap-1">
+            {capability(t('capRecognition'), support.recognition)}
+            {capability(t('capRecording'), support.recording)}
+            {capability(t('capServerStt'), serverStt === true)}
+            {capability(t('capSynthesis'), support.synthesis)}
+            {capability(t('capBanglaVoice'), support.banglaVoice)}
+            {capability(t('capSecure'), support.secureContext)}
+          </ul>
+        </details>
+      </div>
+    </Sheet>
   );
 }
 

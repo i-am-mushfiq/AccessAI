@@ -49,6 +49,12 @@ export type VoiceState =
   | 'confirming'
   /** Heard something that is not a command. */
   | 'unclear'
+  /**
+   * Listening is impossible on this device, and the citizen has asked why.
+   * Carries the typed-command fallback, so voice NAVIGATION still works — intent
+   * resolution is deterministic and needs no microphone.
+   */
+  | 'unavailable'
   | 'error';
 
 export type VoiceActionHandler = (match: IntentMatch) => void | Promise<void>;
@@ -86,8 +92,10 @@ export interface VoiceContextValue {
   cancel(): void;
   confirm(): void;
   reject(): void;
-  /** Submit a corrected transcript, bypassing the microphone. */
+  /** Submit a corrected or typed transcript, bypassing the microphone. */
   submitText(text: string): void;
+  /** Show why listening is unavailable, with the typed-command alternative. */
+  explainUnavailable(): void;
   speak(text: string): void;
   silence(): void;
   /** Screens declare which on-screen actions exist right now. */
@@ -472,6 +480,11 @@ export function VoiceProvider({
     [process],
   );
 
+  const explainUnavailable = useCallback(() => {
+    setLastError(null);
+    setState('unavailable');
+  }, []);
+
   /* --------------------------------------------------------- registries */
 
   const registerActions = useCallback((actions: Record<string, VoiceActionHandler>) => {
@@ -502,7 +515,7 @@ export function VoiceProvider({
     () => ({
       state, support, serverStt, canListen, unavailableReason,
       interim, transcript, lastError, pending, suggestions, speaking, canSpeak,
-      start, dictate, stop, cancel, confirm, reject, submitText, speak, silence,
+      start, dictate, stop, cancel, confirm, reject, submitText, explainUnavailable, speak, silence,
       registerActions, registerReadable,
       helpVisible,
       showHelp: () => setHelpVisible(true),
@@ -511,7 +524,8 @@ export function VoiceProvider({
     [
       state, support, serverStt, canListen, unavailableReason, interim, transcript,
       lastError, pending, suggestions, speaking, canSpeak, start, dictate, stop, cancel,
-      confirm, reject, submitText, speak, silence, registerActions, registerReadable, helpVisible,
+      confirm, reject, submitText, explainUnavailable, speak, silence, registerActions,
+      registerReadable, helpVisible,
     ],
   );
 

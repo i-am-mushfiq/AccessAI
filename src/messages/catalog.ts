@@ -470,6 +470,25 @@ export const catalog = {
       'Voice is switched off in Settings. Turn it on there to use it.',
     ],
 
+    // ---- typed fallback, so voice navigation works without a microphone
+    typeInstead: ['মাইক ছাড়া লিখে চালান', 'Type a command instead'],
+    typeInsteadBody: [
+      'মাইক ছাড়াও কাজ চলবে। যা বলতেন, সেটাই লিখুন — যেমন "সংরক্ষিত" বা "কাছের অফিস"। কমান্ড বোঝার কাজটি এই ফোনেই হয়, ইন্টারনেট ছাড়াই।',
+      'This works without a microphone. Type what you would have said — for example "saved" or "nearby office". Commands are understood on your own device, with no internet needed.',
+    ],
+    typeCommandLabel: ['কমান্ড লিখুন', 'Type a command'],
+    typeCommandHelper: ['যেমন: সংরক্ষিত, সময়সূচি, কাছের অফিস', 'For example: saved, timeline, nearby office'],
+    runCommand: ['চালান', 'Run it'],
+
+    // ---- self-diagnosis, so "why is the button off?" is answerable on screen
+    capabilities: ['এই ফোনে কী কাজ করে', 'What works on this device'],
+    capRecognition: ['ব্রাউজারে কথা শোনা', 'Speech recognition in the browser'],
+    capRecording: ['রেকর্ড করা', 'Audio recording'],
+    capServerStt: ['সার্ভারে কথা বোঝা', 'Server transcription'],
+    capSynthesis: ['পড়ে শোনানো', 'Speech output'],
+    capBanglaVoice: ['বাংলা কণ্ঠ', 'Bangla voice'],
+    capSecure: ['নিরাপদ সংযোগ', 'Secure connection'],
+
     // ---- read aloud
     readAloud: ['পড়ে শোনান', 'Read aloud'],
     stopReading: ['পড়া থামান', 'Stop reading'],

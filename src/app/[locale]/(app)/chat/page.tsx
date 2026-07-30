@@ -50,6 +50,18 @@ export default async function ChatPage({
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_18rem]">
       <ChatClient
+        /**
+         * Remount when the conversation changes.
+         *
+         * `ChatClient` seeds its state with `useState(initialMessages)`, and
+         * `useState` only reads its argument on the first mount. Navigating from
+         * `?c=A` to `?c=B` keeps the same component instance — same route, same
+         * position in the tree — so the URL changed, the server re-rendered with
+         * the new transcript, and the screen kept showing the old one. A key makes
+         * a different conversation a different instance, which is correct here:
+         * there is no state worth preserving across two unrelated conversations.
+         */
+        key={existing?.conversation.id ?? 'new'}
         initialMessages={initialMessages}
         initialConversationId={existing?.conversation.id ?? null}
         aiMode={describeAiMode().mode}
