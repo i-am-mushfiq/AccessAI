@@ -169,6 +169,107 @@ some operators filter them. That is an operational prerequisite, not a code one.
 
 ---
 
+## 4a. Voice access — speech to text and read-aloud
+
+**Why:** for a citizen with low literacy, voice is not an accessibility extra — it
+is the primary interface. The audience this product targets includes people who
+cannot read a Bangla paragraph fluently, and the whole premise is that they can
+describe what happened in their own words.
+
+**Mandatory:** no. **Voice navigation works with no keys at all** — intent
+resolution is deterministic phrase matching
+([src/modules/voice/intent.ts](../src/modules/voice/intent.ts)), so typing or
+saying `সংরক্ষিত` routes identically, offline, in ~1 ms.
+
+### The browser is the unreliable part
+
+| Capability | Chrome / Edge | Firefox | Android WebView |
+|---|---|---|---|
+| Web Speech API (`SpeechRecognition`) | ✅ | ❌ | ❌ mostly |
+| `MediaRecorder` + `getUserMedia` | ✅ | ✅ | ✅ |
+| `speechSynthesis` with a `bn-BD` voice | device-dependent | device-dependent | often absent |
+
+Web Speech is Chromium-only, ships the audio to Google regardless, and gives you
+no control over Bangla accuracy. `MediaRecorder` is near-universal. So the
+server path is not a fallback for exotic browsers — it is the only route that
+behaves the same everywhere, and Firefox has no other option at all.
+
+```bash
+VOICE_MODE="auto"     # browser where present, server otherwise (default)
+VOICE_MODE="server"   # ALWAYS record and upload — identical on every browser
+VOICE_MODE="browser"  # never upload audio; Chromium only
+```
+
+`server` with no `STT_API_KEY` reports itself as `auto`: configuration intent must
+not leave a citizen holding a microphone that can never work.
+
+### Speech to text
+
+One adapter targeting the OpenAI-compatible `/audio/transcriptions` shape, so the
+choice is three environment variables rather than three code paths:
+
+| Option | Cost | Bangla | Notes |
+|---|---|---|---|
+| **Self-hosted `whisper.cpp`** | free | good at `large-v3` | Bundled server already speaks this shape. No audio leaves your machine — the strongest privacy position, and it answers the data-residency question the PRD never addresses |
+| **Hosted, OpenAI-compatible** | free tiers exist | best available without self-hosting | Only the base URL and model id change |
+| **OpenAI directly** | per minute | good | |
+
+There is deliberately **no simulated transcriber**. You cannot fake hearing: an
+invented transcript would be acted on, and a wrong income figure produces a
+confidently wrong eligibility answer. With nothing configured and no browser
+support, the microphone is disabled with a stated reason and the typed-command box
+is offered instead.
+
+**Audio is never stored.** It is transcribed inside the request handler and
+discarded. Speech about widowhood, income and illness is sensitive text plus a
+biometric identifier plus, often, other people audible in the room.
+
+`STT_PROMPT` biases the decoder's vocabulary. Seeding the domain words —
+`বিধবা ভাতা, প্রতিবন্ধী ভাতা, টাকা, উপজেলা, সমাজসেবা` — measurably cuts the
+mishearings that matter, because a general model has no reason to prefer
+`বিধবা ভাতা` over similar-sounding nonsense.
+
+### Read-aloud
+
+Dictation alone is half a bridge: it lets a citizen ask, then hands them a wall of
+text. `speechSynthesis` is free and offline but Android frequently has no `bn-BD`
+voice, and then it either stays silent or reads Bangla in an English accent —
+unintelligible, and worse than nothing because it sounds like it worked.
+
+So `TTS_API_KEY` enables `POST /api/v1/voice/speak`, and **server audio is tried
+first** when configured, with the browser as fallback rather than default. Piper is
+the usual self-hosted answer for Bangla; it needs a thin wrapper to expose
+`/audio/speech`.
+
+Cost is bounded by caching rather than rationing: nearly everything read aloud is
+deterministic — titles, condition reasons, next steps, UI copy — so a strong ETag
+over `(model, locale, text)` makes repeats free. Verified: a repeated request
+returns `304` and the provider is never called twice.
+
+### Diagnosing it
+
+`npm run voice:check` verifies the server half against the live endpoint — key,
+base URL, whether the model id exists on the account, a real 0.6 s WAV round trip,
+and synthesis. The in-app capability panel (tap the microphone when it is
+unavailable) answers the browser half: recognition, recording, server
+transcription, speech output, Bangla voice, secure context.
+
+Both containers are tested: Firefox records `audio/ogg;codecs=opus` and Chromium
+`audio/webm;codecs=opus`; the route accepts both and names the upload accordingly.
+
+### Not built
+
+**In-browser Whisper** (WASM, via transformers.js) would give account-free
+transcription in Firefox with no audio leaving the device. Rejected for now on the
+2G target: the smallest usable model is a ~40 MB download and Bangla quality at
+`tiny`/`base` is poor. Viable as an opt-in for repeat desktop users.
+
+**Continuous listening / wake word.** Deliberate. Holding the microphone open
+drains a cheap phone's battery and records the room after the citizen has
+finished, which is not a trade this audience should be asked to make silently.
+
+---
+
 ## 5. Voice OTP — the accessible-authentication path
 
 **Why:** BDS §10.2.5 requires a voice fallback for citizens who cannot read the SMS. **Not built.**
