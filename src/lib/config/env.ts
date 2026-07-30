@@ -112,6 +112,21 @@ const schema = z.object({
    * hosted Whisper and a self-hosted whisper.cpp server both speak — so
    * `STT_BASE_URL` is the only thing that changes between them.
    */
+  /**
+   * Which path handles speech.
+   *
+   *   auto     Browser Web Speech where present, server otherwise. Cheapest.
+   *   server   ALWAYS record and upload. Ignores Web Speech even where it exists,
+   *            so behaviour is identical on every browser and the transcript
+   *            quality is yours to control rather than Google's.
+   *   browser  Never upload audio. The strictest privacy posture, at the cost of
+   *            working only on Chromium.
+   *
+   * `server` still uses MediaRecorder to capture — that is unavoidable in a web
+   * app — but MediaRecorder is near-universal, whereas Web Speech is not.
+   */
+  VOICE_MODE: z.enum(['auto', 'server', 'browser']).default('auto'),
+
   STT_API_KEY: optionalStr,
   STT_BASE_URL: nonEmpty.default('https://api.openai.com/v1'),
   STT_MODEL: nonEmpty.default('whisper-1'),

@@ -64,6 +64,10 @@ export interface VoiceContextValue {
   readonly support: VoiceSupport;
   /** Server transcription availability, fetched once. Null until known. */
   readonly serverStt: boolean | null;
+  /** Server synthesis availability — read-aloud without a device voice. */
+  readonly serverTts: boolean;
+  /** Which path this deployment prefers. */
+  readonly mode: 'auto' | 'server' | 'browser';
   /** Whether the microphone can be used at all, by any route. */
   readonly canListen: boolean;
   /** Why not, when it cannot. A catalogue key. */
@@ -126,6 +130,8 @@ export function VoiceProvider({
     recognition: false, recording: false, synthesis: false, banglaVoice: false, secureContext: false,
   });
   const [serverStt, setServerStt] = useState<boolean | null>(null);
+  const [serverTts, setServerTts] = useState(false);
+  const [mode, setMode] = useState<'auto' | 'server' | 'browser'>('auto');
   const [state, setState] = useState<VoiceState>('idle');
   const [interim, setInterim] = useState('');
   const [transcript, setTranscript] = useState('');
@@ -143,6 +149,8 @@ export function VoiceProvider({
   const awaitingConfirmRef = useRef(false);
   /** Set while dictating, so a final transcript becomes text instead of a command. */
   const dictationRef = useRef<((text: string) => void) | null>(null);
+  /** The currently playing server-synthesised clip, so it can be stopped. */
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   /* ------------------------------------------------------- capabilities */
 
@@ -159,9 +167,14 @@ export function VoiceProvider({
     // Ask the server once whether it can transcribe, so the microphone can be
     // disabled with a reason instead of failing on every press.
     void api
-      .get<{ voice: { serverStt: boolean } }>('/voice/transcribe')
+      .get<{ voice: { serverStt: boolean; serverTts: boolean; mode: 'auto' | 'server' | 'browser' } }>(
+        '/voice/transcribe',
+      )
       .then((data) => {
-        if (!cancelled) setServerStt(data.voice.serverStt);
+        if (cancelled) return;
+        setServerStt(data.voice.serverStt);
+        setServerTts(data.voice.serverTts);
+        setMode(data.voice.mode);
       })
       .catch(() => {
         if (!cancelled) setServerStt(false);
@@ -172,7 +185,18 @@ export function VoiceProvider({
     };
   }, []);
 
-  const canListen = voiceEnabled && support.secureContext && (support.recognition || (support.recording && serverStt === true));
+  /**
+   * Whether Web Speech may be used at all.
+   *
+   * In `server` mode it is refused even where it exists, so every browser takes
+   * the same path: one transcription engine, one accuracy profile, one place to
+   * improve — and no audio leaving for Google's servers as a side effect of an
+   * API the app never asked to involve them in.
+   */
+  const useBrowserRecognition = support.recognition && mode !== 'server';
+  const useServerStt = support.recording && serverStt === true && mode !== 'browser';
+
+  const canListen = voiceEnabled && support.secureContext && (useBrowserRecognition || useServerStt);
 
   const unavailableReason: VoiceContextValue['unavailableReason'] = !voiceEnabled
     ? 'disabled'
@@ -182,28 +206,90 @@ export function VoiceProvider({
         ? null
         : 'unsupported';
 
-  const canSpeak = support.synthesis && (locale === 'en' || support.banglaVoice);
+  /**
+   * Read-aloud is possible if EITHER the server can synthesise or the device has
+   * a voice that can pronounce this locale. Server availability is what makes
+   * read-aloud work on a phone with no Bangla voice installed.
+   */
+  const canSpeak = serverTts || (support.synthesis && (locale === 'en' || support.banglaVoice));
 
   /* ------------------------------------------------------------ speaking */
 
+  /**
+   * Read text aloud, preferring the server when it can.
+   *
+   * Order matters and is not the obvious one. Server audio is tried FIRST
+   * whenever it is configured, because the device's own synthesiser is the
+   * unreliable option here: Android often has no `bn-BD` voice, and the failure
+   * is silent. The browser is the fallback, not the default.
+   *
+   * `speechSynthesis` is still worth keeping as that fallback — it is free,
+   * instant and works offline, which matters on a 2G connection.
+   */
   const speak = useCallback(
     (text: string) => {
       const clean = textForSpeech(text);
       if (!clean) return;
-      const started = speakLocally(clean, {
-        locale,
-        onEnd: () => setSpeaking(false),
-        onError: () => setSpeaking(false),
-      });
-      setSpeaking(started);
-      // No fallback is attempted silently: if the device cannot pronounce Bangla,
-      // the UI says so rather than reading it with an English voice.
+
+      const playLocally = () => {
+        const started = speakLocally(clean, {
+          locale,
+          onEnd: () => setSpeaking(false),
+          onError: () => setSpeaking(false),
+        });
+        setSpeaking(started);
+        // If this returns false the device cannot pronounce Bangla. Nothing is
+        // spoken, and the SpeakButton is already showing why.
+      };
+
+      if (!serverTts) {
+        playLocally();
+        return;
+      }
+
+      setSpeaking(true);
+      audioRef.current?.pause();
+
+      void fetch('/api/v1/voice/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ text: clean, locale }),
+      })
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`speak ${response.status}`);
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          // Revoke on both paths, or a long session leaks a blob per utterance.
+          const release = () => URL.revokeObjectURL(url);
+          audio.onended = () => {
+            release();
+            setSpeaking(false);
+          };
+          audio.onerror = () => {
+            release();
+            setSpeaking(false);
+          };
+          await audio.play();
+        })
+        .catch(() => {
+          // The server could not synthesise. Fall back rather than going silent.
+          setSpeaking(false);
+          playLocally();
+        });
     },
-    [locale],
+    [locale, serverTts],
   );
 
   const silence = useCallback(() => {
     stopSpeaking();
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
     setSpeaking(false);
   }, []);
 
@@ -387,7 +473,7 @@ export function VoiceProvider({
     silence();
     setState('listening');
 
-    if (support.recognition) {
+    if (useBrowserRecognition) {
       recognitionRef.current = startRecognition(locale, {
         onInterim: setInterim,
         onFinal: (text) => {
@@ -405,7 +491,7 @@ export function VoiceProvider({
       return;
     }
 
-    // No Web Speech: record a clip and send it to the server.
+    // Server path: record a clip and upload it when the citizen stops.
     void startRecording()
       .then((handle) => {
         recordingRef.current = handle;
@@ -414,7 +500,7 @@ export function VoiceProvider({
         setLastError({ kind: 'permission-denied', retryable: false });
         setState('error');
       });
-  }, [canListen, locale, process, silence, state, support.recognition]);
+  }, [canListen, locale, process, silence, state, useBrowserRecognition]);
 
   const dictate = useCallback(
     (onText: (text: string) => void) => {
@@ -513,7 +599,7 @@ export function VoiceProvider({
 
   const value = useMemo<VoiceContextValue>(
     () => ({
-      state, support, serverStt, canListen, unavailableReason,
+      state, support, serverStt, serverTts, mode, canListen, unavailableReason,
       interim, transcript, lastError, pending, suggestions, speaking, canSpeak,
       start, dictate, stop, cancel, confirm, reject, submitText, explainUnavailable, speak, silence,
       registerActions, registerReadable,
@@ -522,7 +608,7 @@ export function VoiceProvider({
       hideHelp: () => setHelpVisible(false),
     }),
     [
-      state, support, serverStt, canListen, unavailableReason, interim, transcript,
+      state, support, serverStt, serverTts, mode, canListen, unavailableReason, interim, transcript,
       lastError, pending, suggestions, speaking, canSpeak, start, dictate, stop, cancel,
       confirm, reject, submitText, explainUnavailable, speak, silence, registerActions,
       registerReadable, helpVisible,

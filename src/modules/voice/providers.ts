@@ -140,6 +140,11 @@ export function setSttProviderForTesting(provider: SttProvider | null): void {
 }
 
 export interface VoiceCapabilities {
+  /**
+   * Which path the client should take. `server` means do not use Web Speech even
+   * where it exists, so every browser behaves identically.
+   */
+  readonly mode: 'auto' | 'server' | 'browser';
   /** Server transcription available for browsers without Web Speech. */
   readonly serverStt: boolean;
   readonly sttModel: string | null;
@@ -158,6 +163,10 @@ export interface VoiceCapabilities {
 export function describeVoiceCapabilities(): VoiceCapabilities {
   const stt = getSttProvider();
   return {
+    // A `server` preference with no key would leave the citizen with a mic that
+    // can never work, so it is reported as `auto` unless the key is actually
+    // present. Configuration intent does not override reality.
+    mode: env.VOICE_MODE === 'server' && !env.STT_API_KEY ? 'auto' : env.VOICE_MODE,
     serverStt: stt !== null,
     sttModel: stt?.model ?? null,
     sttBaseUrl: stt ? env.STT_BASE_URL : null,
