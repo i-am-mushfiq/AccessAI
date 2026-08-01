@@ -10,16 +10,74 @@ Built to the PRD v3.0 (`AccessAI.pdf`) for product behaviour and the Bhorosha De
 
 ---
 
-## Quick start
+## Set up on a new machine
+
+Everything below is copy-pasteable. **Node 20.9+** and **git** are the only prerequisites — no
+database server, no Redis, no Docker, no API keys.
 
 ```bash
+git clone https://github.com/i-am-mushfiq/AccessAI.git
+cd AccessAI
+
 npm install
 cp .env.example .env.local     # every value has a working default
 npm run setup                  # creates the SQLite schema, then seeds the corpus
 npm run dev                    # http://localhost:3000
 ```
 
-`npm run setup` prints the demo accounts. Sign in with **phone + PIN**:
+Then open **http://localhost:3000** — it redirects to `/bn`. Windows users: use Git Bash, or
+substitute `copy .env.example .env.local` for the `cp`.
+
+`.env.local` needs **no editing** to run. The database is a single file at `data/accessai.db`, so
+`rm -rf data/ && npm run setup` is a full reset.
+
+### Verify it end to end
+
+Four commands, each of which either passes or tells you exactly what is wrong:
+
+```bash
+npm run typecheck    # strict TS, noUncheckedIndexedAccess — expect zero output
+npm test             # 604 tests: engine, retrieval, voice, formatting, tokens, a11y
+npm run build        # production build + lint
+npm run ai:check     # reports which AI provider is live, or "simulated"
+```
+
+Then walk the product itself. Sign in as **Rahima** (`01712345678` / `1234`) and:
+
+1. **Ask** (কথা বলুন) → paste the Bangla sentence in [Try this first](#try-this-first). You should
+   see `widowhood` detected, five programmes, Widow Allowance marked **eligible**, cited sources,
+   and a reply that ends in a next step.
+2. **Programmes** → open *Widow Allowance*. The eligibility section must show the per-condition
+   trace — what she supplied against what the programme requires — not just a verdict.
+3. Press **Save**, then open **Saved** and *Create an action plan*. Tick a task; the progress
+   count moves.
+4. **Timeline** → the plan's deadline is on the agenda.
+5. **Nearby** → offices ordered by distance from her district.
+6. Sign out, sign in as the **Administrator** (`01512345678` / `4321`) → **Admin → Programmes** →
+   mark Widow Allowance verified. Sign back in as Rahima: the same answer now carries a higher
+   confidence score, because the 65% unverified ceiling no longer applies. That round trip is the
+   trust model working, and it is the single most informative thing to try.
+
+No SMS provider is configured, so registration and PIN reset print the OTP **to the dev server
+console** (`OTP_DEV_ECHO="true"`) and show it in a labelled development banner. That is why you can
+test those flows without a phone.
+
+### If something fails
+
+| Symptom | Cause and fix |
+|---|---|
+| `npm install` fails on `argon2` | Expected and harmless — it is an optional dependency. Auth falls back to scrypt (see [DEVIATIONS.md](docs/DEVIATIONS.md) §11). |
+| Build hangs on first run | `next/font` is fetching Inter / Noto Sans Bengali once. It needs network access **once**, then caches. |
+| `EADDRINUSE` on 3000 | Another dev server is already running. `npm run dev -- -p 3001`, or kill the old one. |
+| Sign-in says the account does not exist | The seed did not run. `npm run db:seed -- --reset-users`. |
+| Pages load but every list is empty | Schema without data. `npm run setup` again — the seed is idempotent. |
+| "Simulated AI" badge everywhere | Correct with no API key. Add one to `.env.local` to see live prose; **the eligibility decisions, programmes and citations do not change**. |
+
+---
+
+## Demo accounts
+
+`npm run setup` prints these. Sign in with **phone + PIN**:
 
 | Phone | PIN | Who |
 |---|---|---|
@@ -28,9 +86,6 @@ npm run dev                    # http://localhost:3000
 | `01912345678` | `1234` | Karim Mia — farmer, Kurigram, Bangla UI |
 | `01612345678` | `4321` | Moderator — can triage, cannot publish |
 | `01512345678` | `4321` | Administrator — can verify records |
-
-> The first build downloads and caches the Inter / Noto Sans Bengali font files via
-> `next/font`, so it needs network access **once**. Subsequent builds are offline.
 
 ### Try this first
 
@@ -88,7 +143,10 @@ npm run dev          # dev server
 npm run build        # production build
 npm start            # serve the build
 npm run typecheck    # tsc --noEmit (strict, noUncheckedIndexedAccess)
-npm test             # 119 tests: engine, confidence, formatting, tokens, a11y contracts
+npm test             # 604 tests: engine, voice, confidence, formatting, tokens, a11y contracts
+npm run test:a11y    # just the accessibility contracts
+npm run ai:check     # which AI provider is live, and whether it answers
+npm run voice:check  # which speech provider is live, end to end
 npm run db:push      # apply the schema
 npm run db:seed      # seed the corpus (idempotent)
 npm run db:seed -- --reset-users   # also recreate the demo accounts
