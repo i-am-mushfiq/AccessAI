@@ -415,6 +415,17 @@ export const catalog = {
     buttonShort: ['বলুন', 'Speak'],
     listening: ['শুনছি…', 'Listening…'],
     listeningHint: ['বলুন — যেমন "সংরক্ষিত" বা "কাছের অফিস"', 'Speak — for example "saved" or "nearby office"'],
+    /**
+     * The instruction that was missing, and its absence made voice unusable in
+     * server mode: the clip is only sent when the citizen says they have finished.
+     * Phrased as a completed action rather than "stop", because "stop" reads as
+     * abandoning what you were doing — which is what Cancel does.
+     */
+    doneSpeaking: ['বলা শেষ — পাঠান', 'Finished — send it'],
+    doneSpeakingHint: [
+      'বলা শেষ হলে "বলা শেষ — পাঠান" চাপুন।',
+      'When you have finished speaking, press "Finished — send it".',
+    ],
     stopListening: ['থামান', 'Stop'],
     transcribing: ['যা বললেন তা বোঝা হচ্ছে…', 'Working out what you said…'],
     cancel: ['বাতিল', 'Cancel'],
@@ -500,6 +511,10 @@ export const catalog = {
 
     // ---- self-diagnosis, so "why is the button off?" is answerable on screen
     capabilities: ['এই ফোনে কী কাজ করে', 'What works on this device'],
+    // First in the list on purpose: it is the answer to "why is nothing
+    // happening", and the rest are only useful for explaining it.
+    capMicUsable: ['মাইক্রোফোন ব্যবহার করা যাচ্ছে', 'Microphone usable now'],
+    capMode: ['যে পথে কাজ হচ্ছে', 'Path in use'],
     capRecognition: ['ব্রাউজারে কথা শোনা', 'Speech recognition in the browser'],
     capRecording: ['রেকর্ড করা', 'Audio recording'],
     capServerStt: ['সার্ভারে কথা বোঝা', 'Server transcription'],

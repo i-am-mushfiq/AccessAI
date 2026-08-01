@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Mic, AlertCircle, HelpCircle, Volume2 } from 'lucide-react';
+import { Mic, AlertCircle, HelpCircle, Volume2, Check } from 'lucide-react';
 import { Sheet } from '@/components/primitives/Sheet';
 import { Button } from '@/components/primitives/Button';
 import { Textarea } from '@/components/primitives/Textarea';
@@ -26,7 +26,7 @@ export function VoiceSheet() {
   const tc = useTranslations('common');
   const {
     state, transcript, interim, lastError, pending, suggestions,
-    confirm, reject, cancel, submitText, start, canSpeak, speak,
+    confirm, reject, cancel, submitText, start, stop, canSpeak, speak,
     helpVisible, hideHelp,
   } = useVoice();
 
@@ -70,8 +70,21 @@ export function VoiceSheet() {
         open={listening || transcribing}
         onClose={cancel}
         title={listening ? t('listening') : t('transcribing')}
-        description={listening ? t('listeningHint') : undefined}
-        closeLabel={t('cancel')}
+        /**
+         * The hint has to say how to FINISH, not just what to say.
+         *
+         * On the server path the clip is uploaded only when the citizen presses
+         * done. This sheet previously offered Cancel alone — so the single visible
+         * action discarded the recording, the audio was never sent, and voice
+         * appeared to recognise nothing at all. It went unnoticed because browser
+         * recognition auto-finalises on silence, which hides the omission
+         * everywhere except the server path.
+         */
+        description={listening ? `${t('listeningHint')} ${t('doneSpeakingHint')}` : undefined}
+        // `close`, not `cancel`: the body already has a Cancel button, and two
+        // controls with the same accessible name in one dialog is exactly the
+        // ambiguity a screen-reader user cannot resolve.
+        closeLabel={tc('close')}
       >
         <div className="flex flex-col items-center gap-5 py-4">
           <span
@@ -92,9 +105,17 @@ export function VoiceSheet() {
           </p>
 
           {listening ? (
-            <Button variant="secondary" onClick={cancel} fullWidth={false}>
-              {t('cancel')}
-            </Button>
+            <div className="flex w-full flex-col items-center gap-3">
+              {/* PRIMARY, and the whole point of this sheet: it sends the clip.
+                  Cancel is deliberately demoted to tertiary — it throws the
+                  recording away, and it was previously the only button here. */}
+              <Button onClick={stop} fullWidth={false} leadingIcon={<Check size={24} className="icon" />}>
+                {t('doneSpeaking')}
+              </Button>
+              <Button variant="tertiary" size="md" onClick={cancel} fullWidth={false}>
+                {t('cancel')}
+              </Button>
+            </div>
           ) : null}
         </div>
       </Sheet>
@@ -260,15 +281,6 @@ function UnavailableSheet() {
     : unavailableReason === 'insecure' ? 'insecure'
     : 'unsupported';
 
-  const capability = (label: string, ok: boolean) => (
-    <li className="flex items-center justify-between gap-3">
-      <span className="type-body-md text-text-secondary">{label}</span>
-      <span className={ok ? 'type-label-md text-text-success' : 'type-label-md text-text-secondary'}>
-        {ok ? tc('yes') : tc('no')}
-      </span>
-    </li>
-  );
-
   return (
     <Sheet
       open={state === 'unavailable'}
@@ -307,21 +319,63 @@ function UnavailableSheet() {
           rows={2}
         />
 
-        <details className="rounded-md border border-stroke-subtle bg-surface-sunken p-3">
-          <summary className="type-label-md cursor-pointer text-text-secondary">
-            {t('capabilities')}
-          </summary>
-          <ul className="mt-2 flex flex-col gap-1">
-            {capability(t('capRecognition'), support.recognition)}
-            {capability(t('capRecording'), support.recording)}
-            {capability(t('capServerStt'), serverStt === true)}
-            {capability(t('capSynthesis'), support.synthesis)}
-            {capability(t('capBanglaVoice'), support.banglaVoice)}
-            {capability(t('capSecure'), support.secureContext)}
-          </ul>
-        </details>
+        <VoiceCapabilities />
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * What this device can and cannot do, live.
+ *
+ * Extracted and reused because it used to live ONLY inside the "voice is
+ * unavailable" sheet — reachable exactly when the app had already worked out the
+ * answer, and unreachable when the microphone looked fine and silently was not.
+ * That is the case where a citizen, or whoever is helping them, most needs to see
+ * the state: "no voice is recognised" has at least six distinct causes and they
+ * are indistinguishable from the outside.
+ *
+ * `mode` and `canListen` are included because the booleans below are not
+ * sufficient on their own. In `server` mode the browser recogniser is refused
+ * even where it exists, so "speech recognition in the browser: yes" alongside
+ * "server transcription: no" means the microphone is dead — and nothing in the
+ * old list said so.
+ */
+export function VoiceCapabilities() {
+  const t = useTranslations('voice');
+  const tc = useTranslations('common');
+  const { support, serverStt, serverTts, mode, canListen, state, lastError } = useVoice();
+
+  const row = (label: string, ok: boolean) => (
+    <li className="flex items-center justify-between gap-3">
+      <span className="type-body-md text-text-secondary">{label}</span>
+      {/* A word, not a colour — the citizen reading this may be doing so because
+          they cannot see the screen well. */}
+      <span className={ok ? 'type-label-md text-text-success' : 'type-label-md text-text-error'}>
+        {ok ? tc('yes') : tc('no')}
+      </span>
+    </li>
+  );
+
+  return (
+    <details className="rounded-md border border-stroke-subtle bg-surface-sunken p-3">
+      <summary className="type-label-md cursor-pointer text-text-secondary">
+        {t('capabilities')}
+      </summary>
+      <ul className="mt-2 flex flex-col gap-1">
+        {row(t('capMicUsable'), canListen)}
+        {row(t('capRecognition'), support.recognition)}
+        {row(t('capRecording'), support.recording)}
+        {row(t('capServerStt'), serverStt === true)}
+        {row(t('capSynthesis'), support.synthesis)}
+        {row(t('capBanglaVoice'), support.banglaVoice)}
+        {row(t('capSecure'), support.secureContext)}
+      </ul>
+      <p className="type-caption mt-2 tabular text-text-tertiary">
+        {t('capMode')}: {mode} · tts: {String(serverTts)} · state: {state}
+        {lastError ? ` · error: ${lastError.kind}` : ''}
+      </p>
+    </details>
   );
 }
 
@@ -348,6 +402,12 @@ function VoiceHelpSheet({ open, onClose }: { readonly open: boolean; readonly on
     <Sheet open={open} onClose={onClose} title={t('helpTitle')} closeLabel={tc('close')}>
       <div className="flex flex-col gap-5">
         <p className="type-body-md text-text-secondary">{t('helpIntro')}</p>
+
+        {/* Always reachable from here, not only once the app has concluded the
+            microphone is unusable. "Nothing happens when I speak" has several
+            causes that look identical from outside, and this is the one place that
+            distinguishes them. */}
+        <VoiceCapabilities />
 
         {canSpeak ? (
           <Button

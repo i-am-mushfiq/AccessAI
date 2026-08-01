@@ -165,6 +165,14 @@ export function VoiceProvider({
   const dictateOptionsRef = useRef<DictateOptions>({});
   /** The currently playing server-synthesised clip, so it can be stopped. */
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  /**
+   * Counter identifying the current listening attempt.
+   *
+   * Needed because `getUserMedia` resolves whenever the citizen answers the
+   * permission prompt, which may be long after they gave up and pressed cancel.
+   * Comparing generations tells a late-arriving recorder that nobody wants it.
+   */
+  const attemptRef = useRef(0);
 
   /* ------------------------------------------------------- capabilities */
 
@@ -511,12 +519,29 @@ export function VoiceProvider({
       return;
     }
 
-    // Server path: record a clip and upload it when the citizen stops.
+    /**
+     * Server path: record a clip and upload it when the citizen says they have
+     * finished.
+     *
+     * `getUserMedia` does not resolve until the permission prompt is answered,
+     * which can take as long as the citizen takes. The generation token covers
+     * that window: if they press done or cancel while the prompt is still open,
+     * the handle that arrives afterwards belongs to a session nobody is waiting
+     * for, and storing it would leave the microphone open with nothing able to
+     * close it.
+     */
+    const generation = (attemptRef.current += 1);
+
     void startRecording()
       .then((handle) => {
+        if (attemptRef.current !== generation) {
+          handle.cancel();
+          return;
+        }
         recordingRef.current = handle;
       })
       .catch(() => {
+        if (attemptRef.current !== generation) return;
         setLastError({ kind: 'permission-denied', retryable: false });
         setState('error');
       });
@@ -537,6 +562,7 @@ export function VoiceProvider({
       recognitionRef.current = null;
       return;
     }
+
     const recording = recordingRef.current;
     if (recording) {
       recordingRef.current = null;
@@ -548,10 +574,26 @@ export function VoiceProvider({
         }
         void transcribeOnServer(clip);
       });
+      return;
     }
+
+    /**
+     * Nothing to stop yet — the recorder is still waiting on the permission
+     * prompt. This used to fall through and do NOTHING, leaving the sheet saying
+     * "listening" with no recording, no upload, and no way out but cancel: the
+     * citizen pressed done, was told the app was still listening, and waited.
+     *
+     * Invalidating the attempt makes the pending handle self-cancel when it
+     * arrives, so the microphone is not left open either.
+     */
+    attemptRef.current += 1;
+    setLastError({ kind: 'no-speech', retryable: true });
+    setState('error');
   }, [transcribeOnServer]);
 
   const cancel = useCallback(() => {
+    // Any recorder still opening belongs to an attempt nobody is waiting for.
+    attemptRef.current += 1;
     recognitionRef.current?.abort();
     recognitionRef.current = null;
     recordingRef.current?.cancel();
