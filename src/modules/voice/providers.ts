@@ -54,6 +54,12 @@ export interface SttProvider {
     readonly filename: string;
     /** BCP-47 hint. Bangla accuracy is materially better with it than without. */
     readonly language?: 'bn' | 'en';
+    /**
+     * Vocabulary bias. Supplied by the caller rather than read from config here,
+     * because the right hint depends on whether this is a one-word command or a
+     * dictated sentence — see modules/voice/stt-prompt.
+     */
+    readonly prompt?: string;
     readonly signal?: AbortSignal;
   }): Promise<TranscriptionResult>;
 }
@@ -67,6 +73,7 @@ class OpenAiCompatibleStt implements SttProvider {
     audio: Blob;
     filename: string;
     language?: 'bn' | 'en';
+    prompt?: string;
     signal?: AbortSignal;
   }): Promise<TranscriptionResult> {
     const started = Date.now();
@@ -78,12 +85,14 @@ class OpenAiCompatibleStt implements SttProvider {
     if (input.language) form.append('language', input.language);
     form.append('response_format', 'json');
     /**
-     * A transcription prompt biases the decoder's vocabulary. Seeding it with the
-     * domain words this app actually needs — programme names, "ভাতা", "টাকা" —
-     * measurably reduces the mishearings that matter most, because a generic
-     * model has no reason to prefer "বিধবা ভাতা" over similar-sounding nonsense.
+     * Vocabulary bias, chosen by the caller.
+     *
+     * It used to read `env.STT_PROMPT` unconditionally, which meant a one-word
+     * command got the same long domain vocabulary as a dictated sentence. That
+     * hurts short audio: given silence and the full prompt, this model returned
+     * "সন্তান" — a prompt word present in no audio. See stt-prompt.ts.
      */
-    if (env.STT_PROMPT) form.append('prompt', env.STT_PROMPT);
+    if (input.prompt) form.append('prompt', input.prompt);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 45_000);

@@ -305,12 +305,36 @@ export async function startRecording(options: { maxMs?: number } = {}): Promise<
       // Phone speakers and market noise are the normal case, not the exception.
       echoCancellation: true,
       noiseSuppression: true,
+      // Matters more than the other two here: this audience holds the phone at
+      // chest height and speaks quietly, and a quiet clip transcribes badly.
       autoGainControl: true,
+      /**
+       * Mono, at the rate the recogniser actually works in.
+       *
+       * Whisper resamples everything to 16 kHz mono internally, so a 48 kHz
+       * stereo capture is discarded detail that costs upload bytes on a 2G link.
+       * Both are requests, not guarantees — a device that refuses simply gives
+       * what it has, which still works.
+       */
+      channelCount: 1,
+      sampleRate: 16_000,
     },
   });
 
   const mimeType = pickMimeType();
-  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  const recorder = new MediaRecorder(stream, {
+    ...(mimeType ? { mimeType } : {}),
+    /**
+     * Set explicitly rather than left to the browser.
+     *
+     * MediaRecorder's default Opus bitrate is unspecified and varies widely
+     * between browsers — low enough in places to blur the consonant detail that
+     * distinguishes Bangla words, which shows up as exactly the "accuracy is
+     * low" complaint and nowhere else. 48 kbps is generous for mono speech and
+     * still only ~6 KB per second of upload.
+     */
+    audioBitsPerSecond: 48_000,
+  });
   const chunks: Blob[] = [];
 
   recorder.ondataavailable = (event) => {

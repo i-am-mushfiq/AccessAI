@@ -4,6 +4,8 @@ import { getSession } from '@/lib/http/session';
 import { guardRateLimit } from '@/lib/http/rate-limit';
 import { hasLiveOtpChallenge } from '@/modules/auth/auth.service';
 import { getSttProvider, SttError, describeVoiceCapabilities } from '@/modules/voice/providers';
+import { sttPromptFor, type SttPurpose } from '@/modules/voice/stt-prompt';
+import { env } from '@/lib/config/env';
 
 /**
  * POST /api/v1/voice/transcribe — audio in, text out.
@@ -123,11 +125,53 @@ export async function POST(request: NextRequest) {
     const language = localeRaw === 'en' ? 'en' : 'bn';
 
     try {
+      /**
+       * A one-word command and a dictated sentence want opposite vocabulary
+       * hints, so the client says which it is. Defaults to `command`: it is the
+       * shorter, more bleed-prone case, and getting it wrong the other way costs
+       * only a slightly weaker hint on a long utterance.
+       */
+      const purpose: SttPurpose = form.get('purpose') === 'dictation' ? 'dictation' : 'command';
+
       const result = await provider.transcribe({
         audio,
         filename: `speech.${type === 'audio/ogg' ? 'ogg' : type === 'audio/mp4' ? 'mp4' : 'webm'}`,
         language,
+        ...(sttPromptFor(purpose) ? { prompt: sttPromptFor(purpose)! } : {}),
       });
+
+      /**
+       * The transcript, in development only.
+       *
+       * "Accuracy is low" cannot be acted on without knowing what was heard, and
+       * that is invisible everywhere: the audio is discarded by design, the
+       * response goes to the browser, and the citizen only sees a transcript when
+       * the matcher already failed. Without this, diagnosis is guesswork.
+       *
+       * Deliberately NOT in production, and deliberately not the audio. Speech
+       * about widowhood, income and illness is sensitive text, and the clip is a
+       * biometric identifier — the standing rule that audio is never stored is not
+       * relaxed here. The clip's size and duration are printed alongside because a
+       * very short or very quiet clip is itself the usual explanation, and one
+       * line showing all three answers most accuracy questions immediately.
+       */
+      if (env.NODE_ENV !== 'production') {
+        /**
+         * Bytes per second depends on the container, so the estimate has to as
+         * well. Assuming Opus for everything reported a one-second WAV as eight
+         * seconds — and a diagnostic that lies about clip length is worse than no
+         * diagnostic, because clip length is the first thing to suspect.
+         *
+         * Opus at the 48 kbps this app requests is ~6 KB/s; WAV at 16 kHz mono
+         * 16-bit is ~32 KB/s.
+         */
+        const perSecond = type.includes('wav') ? 32_000 : 6_000;
+        const seconds = (audio.size / perSecond).toFixed(1);
+        // eslint-disable-next-line no-console
+        console.log(
+          `[voice] ${purpose} ${language} · ${audio.size}B (~${seconds}s ${type}) · ${result.durationMs}ms · "${result.text}"`,
+        );
+      }
 
       return ok(
         {

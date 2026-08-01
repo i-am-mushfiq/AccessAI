@@ -457,6 +457,15 @@ export function VoiceProvider({
         const form = new FormData();
         form.append('audio', clip, 'speech.webm');
         form.append('locale', locale);
+        /**
+         * Which vocabulary hint the recogniser should use.
+         *
+         * Dictation is a sentence about someone's situation and wants the
+         * programme and money words; a command is one word and wants the fixed
+         * list the matcher can resolve. `dictationRef` already knows which, and
+         * sending the wrong hint measurably costs accuracy on short audio.
+         */
+        form.append('purpose', dictationRef.current ? 'dictation' : 'command');
         // Only present on the sign-in screen; see DictateOptions.
         const { phone } = dictateOptionsRef.current;
         if (phone) form.append('phone', phone);
