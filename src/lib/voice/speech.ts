@@ -271,6 +271,25 @@ function pickMimeType(): string | undefined {
 }
 
 /**
+ * Below this, a clip is a mis-tap rather than speech.
+ *
+ * An Opus container costs roughly a kilobyte in headers before any audio, so a
+ * clip this small cannot contain a word. The guard exists because Whisper does
+ * NOT return an empty transcript for silence — measured against Groq's
+ * whisper-large-v3, one second of digital silence came back as " Guys" and as
+ * " প্রাক্ষন প্রাক্ষন প্রাক্ষন". Uploading a mis-tap therefore costs an API call and
+ * produces a hallucination, which the citizen is then told is "not a command
+ * I understand" — the wrong diagnosis, with the wrong next step, for someone
+ * whose real problem is that the microphone heard nothing.
+ *
+ * Returning null instead routes to the `no-speech` state, whose message is
+ * "nothing was heard, press and hold, then speak". Conservative on purpose:
+ * even at the lowest bitrate a browser will choose, a real one-word command is
+ * several times this size, so no genuine utterance is discarded.
+ */
+const MIN_CLIP_BYTES = 1500;
+
+/**
  * Records a short clip for server transcription.
  *
  * Deliberately batch, not streaming. On a flaky 2G link a completed ~30 KB
@@ -310,18 +329,25 @@ export async function startRecording(options: { maxMs?: number } = {}): Promise<
 
   recorder.start();
 
+  /** One place to decide whether what was captured is worth uploading. */
+  const finish = (): Blob | null => {
+    if (chunks.length === 0) return null;
+    const clip = new Blob(chunks, { type: mimeType ?? 'audio/webm' });
+    return clip.size >= MIN_CLIP_BYTES ? clip : null;
+  };
+
   return {
     stop: () =>
       new Promise<Blob | null>((resolve) => {
         clearTimeout(cap);
         if (recorder.state === 'inactive') {
           release();
-          resolve(chunks.length > 0 ? new Blob(chunks, { type: mimeType ?? 'audio/webm' }) : null);
+          resolve(finish());
           return;
         }
         recorder.onstop = () => {
           release();
-          resolve(chunks.length > 0 ? new Blob(chunks, { type: mimeType ?? 'audio/webm' }) : null);
+          resolve(finish());
         };
         recorder.stop();
       }),
