@@ -131,11 +131,32 @@ const schema = z.object({
   STT_BASE_URL: nonEmpty.default('https://api.openai.com/v1'),
   STT_MODEL: nonEmpty.default('whisper-1'),
   /**
-   * Vocabulary bias for the decoder. Seeding the domain words this app needs
-   * measurably cuts the mishearings that matter, because a general model has no
-   * reason to prefer "বিধবা ভাতা" over similar-sounding nonsense.
+   * Vocabulary bias for the decoder, and the cheapest Bangla accuracy win here.
+   *
+   * Whisper-family models are trained overwhelmingly on English. Given Bangla
+   * audio with no hint they will happily emit English that sounds vaguely
+   * similar — "শোনাও" as "show now" — and the deterministic matcher then has
+   * nothing to match, so a correctly heard command still fails.
+   *
+   * Seeded by default with BOTH halves of the vocabulary that matters: the
+   * programme names a citizen describes their situation with, and the navigation
+   * words they use to drive the app. A general model has no reason to prefer
+   * "বিধবা ভাতা" over similar-sounding nonsense unless told this is the domain.
+   *
+   * Overridable, because a deployment that adds programmes should extend it.
    */
-  STT_PROMPT: optionalStr,
+  STT_PROMPT: nonEmpty.default(
+    [
+      // what they are asking about
+      'বিধবা ভাতা', 'বয়স্ক ভাতা', 'প্রতিবন্ধী ভাতা', 'মাতৃত্বকালীন ভাতা',
+      'শিক্ষা বৃত্তি', 'কৃষি ঋণ', 'আইনি সহায়তা', 'প্রশিক্ষণ', 'অনুদান',
+      // how they drive the app
+      'সংরক্ষিত', 'সময়সূচি', 'কাছের অফিস', 'বিজ্ঞপ্তি', 'প্রোফাইল', 'সেটিংস',
+      'কর্মসূচি', 'সুযোগ', 'সেভ করো', 'পড়ে শোনাও', 'সাহায্য', 'পিছনে',
+      // numbers and money, where a mishearing is most consequential
+      'টাকা', 'হাজার', 'লাখ', 'মাসিক আয়', 'সন্তান',
+    ].join(', '),
+  ),
 
   /** Text-to-speech, OPTIONAL — used only when the browser has no Bangla voice. */
   TTS_API_KEY: optionalStr,

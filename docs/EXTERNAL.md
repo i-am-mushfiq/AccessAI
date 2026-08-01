@@ -181,6 +181,34 @@ resolution is deterministic phrase matching
 ([src/modules/voice/intent.ts](../src/modules/voice/intent.ts)), so typing or
 saying `সংরক্ষিত` routes identically, offline, in ~1 ms.
 
+### "Bangla voice does not work" — diagnose it in this order
+
+The complaint conflates two independent layers, and they have different fixes.
+
+| Layer | Needs a key? | How to check | Language-specific? |
+|---|---|---|---|
+| **Hearing** — audio → text | **Yes**, or a Chromium browser | `npm run voice:check` | No |
+| **Understanding** — text → command | No | `npm run voice:bangla` | Yes |
+
+**Almost always it is the first layer, and it is not a Bangla problem at all.**
+With no `STT_API_KEY`, Firefox and Android WebViews have no recogniser to fall back on, so nothing
+is heard in *any* language — the microphone is disabled with a stated reason and the typed-command
+box is offered instead. In Chrome the browser recogniser takes over and Bangla works, which is why
+the fault often looks browser-specific.
+
+`npm run voice:bangla` resolves 33 realistic Bangla utterances — plain, politely inflected, with
+filler, and Banglish — through the same deterministic matcher a spoken transcript uses, with no
+microphone involved. If that passes and speech still fails, the problem is hearing, not Bangla.
+
+Two Bangla-specific things do matter once a provider is configured, and both are handled:
+
+- **The `language` hint is sent as `bn`.** Whisper-family models are trained overwhelmingly on
+  English and will emit plausible English for Bangla audio without it — "শোনাও" as "show now" — after
+  which a correctly heard command has nothing to match against.
+- **`STT_PROMPT` defaults to a Bangla domain vocabulary** — programme names, the navigation words,
+  and টাকা / হাজার / লাখ. It biases the decoder toward the terms this app actually needs. Extend it if
+  you add programmes; do not blank it.
+
 ### The browser is the unreliable part
 
 | Capability | Chrome / Edge | Firefox | Android WebView |
@@ -210,9 +238,20 @@ choice is three environment variables rather than three code paths:
 
 | Option | Cost | Bangla | Notes |
 |---|---|---|---|
-| **Self-hosted `whisper.cpp`** | free | good at `large-v3` | Bundled server already speaks this shape. No audio leaves your machine — the strongest privacy position, and it answers the data-residency question the PRD never addresses |
-| **Hosted, OpenAI-compatible** | free tiers exist | best available without self-hosting | Only the base URL and model id change |
-| **OpenAI directly** | per minute | good | |
+| **Groq** — the fastest way to working speech | **free tier** | `whisper-large-v3`, genuinely multilingual | Key from `console.groq.com`, then three lines below. No code change |
+| **Self-hosted `whisper.cpp`** | free, **no account** | good at `large-v3` | Bundled server already speaks this shape. No audio leaves your machine — the strongest privacy position, and it answers the data-residency question the PRD never addresses |
+| **OpenAI directly** | per minute, no free tier | good | |
+
+The three lines for Groq, which is what to reach for if speech is simply not working:
+
+```bash
+STT_API_KEY="gsk_..."
+STT_BASE_URL="https://api.groq.com/openai/v1"
+STT_MODEL="whisper-large-v3"
+```
+
+Then `npm run voice:check` — it lists the models the endpoint actually exposes, which is how a wrong
+model id (the most common misconfiguration) is caught before a citizen presses the microphone.
 
 There is deliberately **no simulated transcriber**. You cannot fake hearing: an
 invented transcript would be acted on, and a wrong income figure produces a
@@ -224,10 +263,11 @@ is offered instead.
 discarded. Speech about widowhood, income and illness is sensitive text plus a
 biometric identifier plus, often, other people audible in the room.
 
-`STT_PROMPT` biases the decoder's vocabulary. Seeding the domain words —
-`বিধবা ভাতা, প্রতিবন্ধী ভাতা, টাকা, উপজেলা, সমাজসেবা` — measurably cuts the
-mishearings that matter, because a general model has no reason to prefer
-`বিধবা ভাতা` over similar-sounding nonsense.
+`STT_PROMPT` biases the decoder's vocabulary and now **defaults** to the domain rather than being
+empty — programme names (`বিধবা ভাতা`, `প্রতিবন্ধী ভাতা`), the navigation words the matcher expects
+(`সংরক্ষিত`, `সময়সূচি`, `কাছের অফিস`), and the money words where a mishearing is most consequential
+(`টাকা`, `হাজার`, `লাখ`). A general model has no reason to prefer `বিধবা ভাতা` over similar-sounding
+nonsense unless told what domain it is in. Extend it when you add programmes; do not blank it.
 
 ### Read-aloud
 

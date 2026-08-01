@@ -76,6 +76,8 @@ test those flows without a phone.
 | Sign-in says the account does not exist | The seed did not run. `npm run db:seed -- --reset-users`. |
 | Pages load but every list is empty | Schema without data. `npm run setup` again — the seed is idempotent. |
 | "Simulated AI" badge everywhere | Correct with no API key. Add one to `.env.local` to see live prose; **the eligibility decisions, programmes and citations do not change**. |
+| The microphone button is disabled | Correct with no `STT_API_KEY` in Firefox or an Android WebView — neither has a browser recogniser, so **nothing can be heard in any language**. `npm run voice:check` prints the three lines that fix it (a free Groq key). Voice navigation still works by typing in the box the button offers. |
+| Bangla voice specifically "does not work" | Almost always the row above, not a Bangla fault. Confirm with `npm run voice:bangla` — it resolves 33 realistic Bangla utterances through the same matcher a spoken transcript uses, with no microphone. If that passes, the problem is *hearing*, not Bangla. |
 
 ---
 

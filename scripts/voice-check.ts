@@ -91,7 +91,20 @@ async function main() {
     console.log('      disabled with a stated reason and the typed-command box is offered.');
     console.log('      Voice navigation still works by typing.');
     console.log('');
-    console.log('      Set STT_API_KEY and STT_BASE_URL to fix it. See docs/EXTERNAL.md §4a.');
+    console.log('      NOTE: this is not a Bangla problem. With no provider nothing is');
+    console.log('      heard in ANY language. Bangla UNDERSTANDING is separate and needs');
+    console.log('      no key at all — verify it with:  npm run voice:bangla');
+    console.log('');
+    console.log('      To make speech work, the cheapest route is a FREE Groq key');
+    console.log('      (console.groq.com), which speaks the same OpenAI shape, so only');
+    console.log('      these three lines change in .env.local:');
+    console.log('');
+    console.log('        STT_API_KEY="gsk_..."');
+    console.log('        STT_BASE_URL="https://api.groq.com/openai/v1"');
+    console.log('        STT_MODEL="whisper-large-v3"');
+    console.log('');
+    console.log('      Then re-run this command. See docs/EXTERNAL.md §4a for the');
+    console.log('      alternatives, including a self-hosted whisper.cpp with no account.');
   } else {
     const models = await listModels(env.STT_BASE_URL, env.STT_API_KEY ?? '');
     if (models) {

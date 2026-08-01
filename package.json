@@ -18,6 +18,7 @@
     "ai:check": "tsx scripts/ai-check.ts",
     "voice:check": "tsx scripts/voice-check.ts",
     "osm:clear": "tsx scripts/clear-osm-cache.ts",
+    "voice:bangla": "tsx scripts/voice-bangla-probe.ts",
     "setup": "npm run db:push && npm run db:seed",
     "test": "vitest run",
     "test:watch": "vitest",
