@@ -1,23 +1,27 @@
 import type { NextRequest } from 'next/server';
-import { and, eq, inArray } from 'drizzle-orm';
-import { db } from '@/lib/db/client';
-import { serviceLocations } from '@/lib/db/schema';
 import { ok, handle } from '@/lib/http/response';
 import { getFullSession } from '@/lib/http/session';
 import { nearbySchema, parseQuery } from '@/lib/validation/schemas';
-import { haversineKm, getDistrict, DISTRICTS } from '@/lib/domain/geography';
+import { findNearby } from '@/modules/places/places.service';
+import { placeLabel } from '@/lib/domain/place-labels';
 import { env } from '@/lib/config/env';
+import type { PlaceType } from '@/modules/places/osm-tags';
 
 /**
  * GET /api/v1/locations — Nearby Services (PRD Feature 12, §70).
  *
- * Distance is computed from either supplied coordinates or the citizen's
- * district headquarters. The response states which reference was used and marks
- * the values approximate, because presenting a district-centroid distance as a
- * precise one would send someone walking in the wrong direction.
+ * Returns the seeded corpus AND real OpenStreetMap places, each row carrying the
+ * `source` that produced it. A client must be able to tell an authored sample
+ * address from a genuine hospital, so provenance is a field rather than something
+ * inferred from which endpoint was called.
  *
- * With no map provider configured the endpoint still returns a fully ordered,
- * usable list; the UI renders a schematic instead of a tiled map.
+ * Distance is measured from supplied coordinates when present, otherwise from the
+ * district town centre — and the response says which, because a district-centroid
+ * distance presented as precise would send someone walking the wrong way.
+ *
+ * `osm` reports whether the OpenStreetMap half succeeded. A failure there is not
+ * an error response: the seeded list is the primary surface and still works, so
+ * the caller gets its data plus an honest note that the real places are missing.
  */
 export async function GET(request: NextRequest) {
   return handle(async () => {
@@ -25,63 +29,44 @@ export async function GET(request: NextRequest) {
     const session = await getFullSession();
 
     const district = query.district ?? session?.profile?.district ?? session?.user.district ?? null;
+    const locale = session?.user.language === 'en' ? 'en' : 'bn';
 
-    // Widen to the whole division when a district has few records, so the list
-    // is never empty just because one district town has nothing indexed.
-    const districtRecord = district ? getDistrict(district) : undefined;
-    const divisionDistricts = districtRecord
-      ? DISTRICTS.filter((d) => d.division === districtRecord.division).map((d) => d.code)
-      : [];
+    const result = await findNearby({
+      coords:
+        query.lat !== undefined && query.lng !== undefined
+          ? { lat: query.lat, lng: query.lng }
+          : null,
+      districtCode: district,
+      type: (query.type as PlaceType | undefined) ?? null,
+      opportunitySlug: query.opportunitySlug ?? null,
+      typeLabel: (type) => placeLabel(type, locale),
+    });
 
-    const conditions = [];
-    if (query.type) conditions.push(eq(serviceLocations.type, query.type as never));
-
-    const primary = district
-      ? await db
-          .select()
-          .from(serviceLocations)
-          .where(and(eq(serviceLocations.district, district), ...conditions))
-          .limit(200)
-      : [];
-
-    const rows =
-      primary.length >= 3 || !districtRecord
-        ? primary
-        : await db
-            .select()
-            .from(serviceLocations)
-            .where(and(inArray(serviceLocations.district, divisionDistricts), ...conditions))
-            .limit(200);
-
-    const source =
-      query.lat !== undefined && query.lng !== undefined
-        ? { lat: query.lat, lng: query.lng, kind: 'device' as const }
-        : districtRecord
-          ? { lat: districtRecord.lat, lng: districtRecord.lng, kind: 'district' as const }
-          : null;
-
-    let items = rows.map((location) => ({
-      ...location,
-      distanceKm: source
-        ? Math.round(haversineKm(source, { lat: location.lat, lng: location.lng }) * 10) / 10
-        : null,
-    }));
-
-    if (query.opportunitySlug) {
-      items = items.filter((l) => l.services.includes(query.opportunitySlug!));
-    }
-
-    items.sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
+    const limit = query.limit ?? 40;
 
     return ok(
       {
-        items: items.slice(0, query.limit ?? 40),
-        reference: source,
-        // The map is optional; the list is not.
+        items: result.places.slice(0, limit),
+        reference: {
+          ...result.reference.point,
+          // `device` is kept as the wire value for backwards compatibility with
+          // existing clients; internally the same thing is called `gps`.
+          kind: result.reference.kind === 'gps' ? ('device' as const) : ('district' as const),
+        },
+        osm: result.osm,
         mapProvider: env.NEXT_PUBLIC_MAP_PROVIDER,
-        distanceIsApproximate: source?.kind !== 'device',
+        distanceIsApproximate: result.reference.kind !== 'gps',
+        attribution: '© OpenStreetMap contributors, ODbL',
       },
-      { meta: { total: items.length, district, widenedToDivision: rows !== primary } },
+      {
+        meta: {
+          total: result.places.length,
+          district,
+          widenedToDivision: result.widenedToDivision,
+          osmCount: result.places.filter((p) => p.source === 'osm').length,
+          seedCount: result.places.filter((p) => p.source === 'seed').length,
+        },
+      },
     );
   }, 'locations:get');
 }

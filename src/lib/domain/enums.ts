@@ -72,6 +72,43 @@ export const VERIFICATION_STATUSES = [
 ] as const;
 export type VerificationStatus = (typeof VERIFICATION_STATUSES)[number];
 
+/**
+ * Kinds of place a citizen might be sent to.
+ *
+ * Lifted out of the schema so the OSM tag map, the UI labels and the column
+ * definition all read from one list — a type present in the database but missing
+ * from the label map renders as `police_station` to a citizen.
+ *
+ * The first three are administrative TIERS, and the distinction is not cosmetic:
+ * in Bangladesh the tier decides which forms can be filed where. OpenStreetMap
+ * does not record the tier, so OSM-sourced government offices use the untiered
+ * `government_office` rather than being assigned a tier we would be guessing at.
+ */
+export const SERVICE_LOCATION_TYPES = [
+  'union_office',
+  'upazila_office',
+  'district_office',
+  'government_office',
+  'hospital',
+  'clinic',
+  'pharmacy',
+  'police_station',
+  'court',
+  'fire_station',
+  'post_office',
+  'legal_aid',
+  'agriculture_office',
+  'training_center',
+  'ngo_office',
+  'bank',
+  'digital_center',
+] as const;
+export type ServiceLocationType = (typeof SERVICE_LOCATION_TYPES)[number];
+
+/** Where a place record came from. Shown to the citizen, never inferred. */
+export const PLACE_SOURCES = ['seed', 'osm'] as const;
+export type PlaceSource = (typeof PLACE_SOURCES)[number];
+
 /* ------------------------------------------------------- citizen profile */
 export const GENDERS = ['male', 'female', 'other', 'prefer_not_to_say'] as const;
 export type Gender = (typeof GENDERS)[number];

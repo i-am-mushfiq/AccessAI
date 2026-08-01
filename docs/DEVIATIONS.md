@@ -226,15 +226,86 @@ with an explanatory error rather than silently accepting.
 
 ---
 
-## 12. Interactive map → ordered list with the map as enhancement
+## 12. Interactive map → OpenStreetMap, no key, list still primary
 
-**PRD §70** describes an interactive Mapbox/Google map. Without a provider key, Nearby Services
-renders a **distance-ordered list** with call and directions actions, and states why there is no
-map. Setting `NEXT_PUBLIC_MAP_PROVIDER` + a token enables tiles.
+**PRD §70** describes an interactive Mapbox/Google map. This now exists, on **OpenStreetMap**
+rather than a commercial provider, and needs no account or key — the map works on a fresh clone.
+`NEXT_PUBLIC_MAP_PROVIDER` defaults to `osm`; `none` restores the previous key-less list.
 
-Distances are computed from district-headquarters coordinates (±5 km) or from device geolocation
-when granted, and are **labelled approximate** in both cases where the reference is a district
-centroid. Presenting a centroid distance as precise would send someone walking the wrong way.
+**The list remains the primary surface.** Every place on the map is in the list below it with its
+address, phone number and directions link, and nothing is reachable only by pin. A citizen who
+cannot see, cannot drag, or has images blocked loses the picture and nothing else.
+
+**No map library.** Leaflet plus its stylesheet is ~45 KB gzipped before a tile loads, on a screen
+whose whole point is a cheap Android phone on 2G (BDS §4.7). `lib/geo/mercator.ts` +
+`components/nearby/MapView.tsx` is about 400 lines, adds no dependency, and — the deciding factor —
+was easier to make keyboard-operable than a third-party canvas is to retrofit. Arrow keys pan, `+`/`−`
+zoom, `Home` re-frames, every pin is a real focusable `<button>` whose accessible name carries the
+type and distance, and each marker has a letter glyph as well as a tint (BDS §2.2 rule 4).
+
+**Tiles are proxied** through `/api/v1/map/tile/{z}/{x}/{y}` rather than fetched by the browser.
+Four reasons, none interchangeable: OSM's Tile Usage Policy requires an identifying `User-Agent`
+that an `<img>` cannot send; the CSP stays at `img-src 'self'`; the tile host never receives the IP
+of someone looking up a legal-aid office or a hospital; and the provider becomes swappable via
+`MAP_TILE_URL` without touching the client.
+
+**Distances are now measured from the citizen's actual position** when they share it. The screen
+previously took a GPS fix, snapped it to the nearest district town and discarded the coordinates —
+so someone standing outside a hospital was told it was 11 km away, that being the distance from
+their district's centroid. The fix is kept, travels in the URL so a reload does not silently revert,
+and the note under the list names its reference point: "measured from where you are" versus "from
+the centre of the district town". Straight-line, and it says so.
+
+---
+
+## 12a. Real places from OpenStreetMap, kept separate from the sample corpus
+
+Nearby Services now shows **two kinds of record and never blurs them**:
+
+| | Seeded corpus | OpenStreetMap |
+|---|---|---|
+| Coverage | All 64 districts, 5 per district | Thorough in cities, thin in rural upazilas |
+| Addresses | Structurally honest, **invented** | Real |
+| Phone numbers | None invented; real helplines only | Real where a contributor added one |
+| Administrative tier | Union / upazila / district | Not recorded — see below |
+| Badge | "Sample record" | "OpenStreetMap — real location" |
+| `verificationStatus` | The enum | **`null`** |
+
+`verificationStatus` is deliberately null for OSM rows rather than `unverified_sample`. That value
+means "authored sample data we invented"; applying it to a genuine hospital would be a false
+statement in the other direction. The two are labelled distinctly because merging them would let
+invented addresses borrow the credibility of real ones.
+
+Real types retrieved: **police stations, hospitals, clinics, courts, pharmacies, banks, post
+offices, fire stations, colleges, NGO offices and government offices.**
+
+Three tag mappings were refused, and the refusals matter more than the mappings:
+
+- **`office=lawyer` is not `legal_aid`.** It is a private practice that charges fees. Mapping it
+  would send someone who cannot afford a lawyer to a lawyer. Legal aid stays with the seeded records
+  and the real `16430` helpline.
+- **`office=government` does not get an administrative tier.** Union, upazila and district offices
+  are different things and the tier decides which forms can be filed where. OSM does not record it,
+  so those rows use an untiered `government_office` type instead of a guess that would put a citizen
+  in the wrong queue.
+- **`agriculture_office` and `digital_center` have no OSM equivalent** and are left unmapped. Those
+  filters show seeded records only, which is honest.
+
+Two display decisions came out of live data rather than theory. Central Dhaka returns **5,240 real
+places within 25 km, 36 of them banks against 6 hospitals** — ordered by distance alone the banks
+bury the hospitals, so each category is capped at 6 while no type filter is applied, and the cap
+lifts when the citizen picks a type. And the count says what is *shown* against what *exists*
+("the nearest 55 are shown"), because a silently trimmed list reads as a complete one.
+
+Overpass results are cached in `osm_place_cache`, keyed by a ~5.5 km grid cell so two citizens in
+one town share a lookup. A cold query takes ~20 s; a cached one ~0.5 s. `npm run osm:clear` empties
+it, which is needed after changing normalisation because the cache stores post-normalisation shapes.
+
+**Overpass and OSM tiles are volunteer-run and rate-limited.** Point `OVERPASS_URL` and
+`MAP_TILE_URL` at your own instance or a paid provider before real traffic, and set
+`MAP_USER_AGENT` to something contactable — see [EXTERNAL.md](EXTERNAL.md). A failure on either is
+never fatal: the seeded list is the primary surface, and the screen says the real places are
+missing rather than showing an error.
 
 ---
 

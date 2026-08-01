@@ -698,6 +698,17 @@ export const catalog = {
       'অবস্থান পাওয়া যায়নি। আপনার জেলা বেছে নিলেই তালিকা দেখাব।',
       'Could not get your location. Choose your district and we will show the list.',
     ],
+    // Distance copy comes in two forms, because the reference point changes what
+    // the number means. Claiming "from you" while measuring from a district
+    // centroid would overstate the precision by tens of kilometres.
+    distanceFromDistrict: [
+      'দূরত্ব প্রায় হিসাব — জেলা শহরের কেন্দ্র থেকে মাপা। আপনার অবস্থান দিলে সঠিক দূরত্ব দেখাতে পারব।',
+      'Distances are approximate, measured from the centre of the district town. Share your location for exact distances.',
+    ],
+    distanceFromYou: [
+      'দূরত্ব আপনার অবস্থান থেকে সরলরেখায় মাপা — রাস্তার দূরত্ব বেশি হবে।',
+      'Distances are straight-line from where you are. The road distance will be longer.',
+    ],
     distanceApproxNote: [
       'দূরত্ব প্রায় হিসাব — জেলা শহর থেকে মাপা।',
       'Distances are approximate, measured from the district town.',
@@ -706,6 +717,47 @@ export const catalog = {
       'মানচিত্র সেবা চালু নেই, তাই দূরত্ব অনুযায়ী তালিকা দেখানো হচ্ছে।',
       'No map service is configured, so the list is shown ordered by distance.',
     ],
+
+    // ---- map
+    mapLabel: ['সেবা কেন্দ্রের মানচিত্র', 'Map of service locations'],
+    mapKeyboardHelp: [
+      'তির চিহ্ন দিয়ে সরান, + / − দিয়ে ছোট-বড় করুন, Home চাপলে আবার সব দেখা যাবে।',
+      'Arrow keys pan, + and − zoom, Home re-frames everything.',
+    ],
+    zoomIn: ['বড় করে দেখুন', 'Zoom in'],
+    zoomOut: ['ছোট করে দেখুন', 'Zoom out'],
+    recentreMap: ['সব আবার দেখান', 'Show everything again'],
+    osmContributors: ['অবদানকারীরা', 'contributors'],
+    yourLocation: ['আপনার অবস্থান', 'Your location'],
+    districtCentre: ['জেলা শহরের কেন্দ্র', 'Centre of the district town'],
+    showMap: ['মানচিত্র দেখান', 'Show the map'],
+    hideMap: ['মানচিত্র লুকান', 'Hide the map'],
+
+    // ---- provenance. Which half of the list a record came from, never implied.
+    sourceOsm: ['OpenStreetMap — সত্যিকারের অবস্থান', 'OpenStreetMap — real location'],
+    sourceOsmNote: [
+      'এই জায়গাগুলো OpenStreetMap থেকে নেওয়া — স্বেচ্ছাসেবীরা তথ্য দিয়েছেন, তাই সত্যিকারের হলেও আমরা যাচাই করিনি। ফোন নম্বর বা সময় নাও থাকতে পারে।',
+      'These places come from OpenStreetMap, contributed by volunteers. They are real, but not verified by us, and may have no phone number or opening hours.',
+    ],
+    sourceSeed: ['নমুনা তথ্য', 'Sample record'],
+    osmUnavailable: [
+      'এই মুহূর্তে OpenStreetMap থেকে সত্যিকারের অবস্থান আনা যাচ্ছে না, তাই শুধু নমুনা তালিকা দেখানো হচ্ছে।',
+      'Real locations could not be fetched from OpenStreetMap just now, so only the sample list is shown.',
+    ],
+    osmCount: [
+      'OpenStreetMap থেকে {count}টি সত্যিকারের জায়গা দেখানো হচ্ছে',
+      'Showing {count} real places from OpenStreetMap',
+    ],
+    // Says plainly that the list is trimmed. Central Dhaka has thousands of
+    // matching places; showing sixty and implying that is all of them would be a
+    // silent truncation, and a citizen would stop looking.
+    osmTrimmed: [
+      'এই এলাকায় আরও অনেক আছে — কাছের {count}টি দেখানো হচ্ছে। ধরন বেছে নিলে সেই ধরনের সব দেখতে পাবেন।',
+      'There are many more in this area — the nearest {count} are shown. Pick a type to see all of that kind.',
+    ],
+    emergencyDept: ['২৪ ঘণ্টা ইমার্জেন্সি', '24-hour emergency'],
+    website: ['ওয়েবসাইট', 'Website'],
+    noPhoneKnown: ['ফোন নম্বর জানা নেই', 'No phone number recorded'],
     officeHours: ['খোলা থাকে', 'Open'],
     callOffice: ['ফোন করুন', 'Call'],
     getDirections: ['যাওয়ার পথ', 'Directions'],

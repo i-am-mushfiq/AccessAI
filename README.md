@@ -37,7 +37,7 @@ Four commands, each of which either passes or tells you exactly what is wrong:
 
 ```bash
 npm run typecheck    # strict TS, noUncheckedIndexedAccess — expect zero output
-npm test             # 604 tests: engine, retrieval, voice, formatting, tokens, a11y
+npm test             # 685 tests: engine, retrieval, voice, geo, formatting, tokens, a11y
 npm run build        # production build + lint
 npm run ai:check     # reports which AI provider is live, or "simulated"
 ```
@@ -52,7 +52,11 @@ Then walk the product itself. Sign in as **Rahima** (`01712345678` / `1234`) and
 3. Press **Save**, then open **Saved** and *Create an action plan*. Tick a task; the progress
    count moves.
 4. **Timeline** → the plan's deadline is on the agenda.
-5. **Nearby** → offices ordered by distance from her district.
+5. **Nearby** → an OpenStreetMap map plus a distance-ordered list. Real hospitals, police stations
+   and courts appear beside the sample offices, each badged with where it came from. Press **Use my
+   location** and every distance is recomputed from where you actually are — the note under the list
+   changes to say so. The first load of a new area takes ~20 s while Overpass answers; after that it
+   is cached.
 6. Sign out, sign in as the **Administrator** (`01512345678` / `4321`) → **Admin → Programmes** →
    mark Widow Allowance verified. Sign back in as Rahima: the same answer now carries a higher
    confidence score, because the 65% unverified ceiling no longer applies. That round trip is the
@@ -126,12 +130,23 @@ This matters more than the feature list, so it is stated first.
   `OPENAI_API_KEY`, responses come from a deterministic composer. The eligibility decisions,
   programmes, reasons, and citations are *identical* either way — only the prose is less fluent.
   The UI says so on every screen and in every logged response. Nothing is faked silently.
-- **Service-location phone numbers and street addresses are not real.** Only genuinely public
-  national helplines (`16430` legal aid, `109` women's helpline, `16263` health, `16123`
-  agriculture) are surfaced as dialable.
+- **The *sample* service locations have invented street addresses and no phone numbers.** Among the
+  seeded records, only genuinely public national helplines (`16430` legal aid, `109` women's
+  helpline, `16263` health, `16123` agriculture) are surfaced as dialable. The OpenStreetMap
+  records listed beside them are real and some do carry real phone numbers — which is exactly why
+  the two are badged differently.
+
+**Real, and needs no key** — the map and the real service locations. Nearby Services renders an
+interactive **OpenStreetMap** map (no map library, tiles proxied through this app so no third-party
+origin enters the CSP) and lists **genuine police stations, hospitals, courts, pharmacies, banks,
+post offices and fire stations** from the Overpass API, ordered by distance. Those are shown
+alongside the sample records and **labelled separately** — a real hospital never inherits the
+"sample data" badge, and an invented address never borrows a real one's credibility. Distances are
+measured from the citizen's actual position when they share it, and the screen says which reference
+it used.
 
 **Not built** — see [docs/EXTERNAL.md](docs/EXTERNAL.md) for exactly what each needs:
-SMS delivery, email delivery, map tiles, vector embeddings, OCR, and voice-OTP callback.
+SMS delivery, email delivery, vector embeddings, OCR, and voice-OTP callback.
 Each degrades to a stated, usable fallback rather than a broken control.
 
 ---
@@ -143,13 +158,14 @@ npm run dev          # dev server
 npm run build        # production build
 npm start            # serve the build
 npm run typecheck    # tsc --noEmit (strict, noUncheckedIndexedAccess)
-npm test             # 604 tests: engine, voice, confidence, formatting, tokens, a11y contracts
+npm test             # 685 tests: engine, voice, geo, confidence, formatting, tokens, a11y
 npm run test:a11y    # just the accessibility contracts
 npm run ai:check     # which AI provider is live, and whether it answers
 npm run voice:check  # which speech provider is live, end to end
 npm run db:push      # apply the schema
 npm run db:seed      # seed the corpus (idempotent)
 npm run db:seed -- --reset-users   # also recreate the demo accounts
+npm run osm:clear    # empty the OpenStreetMap place cache and re-query next request
 ```
 
 ---
@@ -222,7 +238,7 @@ src/
     knowledge/                retrieval.ts (hybrid), tokenizer.ts (bn+en)
     opportunities/ recommendation/ citizen/ auth/ admin/
   lib/
-    db/schema.ts              31 tables
+    db/schema.ts              32 tables
     db/seed/                  the corpus + integrity validation
     domain/                   enums, geography (64 districts), rules (AST)
     format/                   numerals (Bangla, lakh/crore), dates

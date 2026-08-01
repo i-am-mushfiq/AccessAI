@@ -1,26 +1,38 @@
 import { getTranslations, setRequestLocale } from 'next-intl/server';
-import { and, eq, inArray } from 'drizzle-orm';
-import { db } from '@/lib/db/client';
-import { serviceLocations } from '@/lib/db/schema';
 import { getFullSession } from '@/lib/http/session';
-import { DISTRICTS, getDistrict, haversineKm } from '@/lib/domain/geography';
+import { findNearby } from '@/modules/places/places.service';
+import { placeLabel } from '@/lib/domain/place-labels';
 import { NearbyBrowser } from '@/components/nearby/NearbyBrowser';
 import { env } from '@/lib/config/env';
+import type { PlaceType } from '@/modules/places/osm-tags';
 
 /**
  * Nearby Services — PRD §Feature 12 and §70.
  *
- * Renders a distance-ordered LIST as the primary surface, with the map as an
- * enhancement. With no map provider key the screen is fully functional; PRD §70
- * describes an interactive map, and delivering a broken empty map instead of a
- * usable list would be worse than the documented deviation.
+ * Two sources, kept distinguishable: the authored sample corpus (complete,
+ * tiered, all 64 districts, invented addresses) and OpenStreetMap (real
+ * hospitals, police stations, courts and pharmacies, volunteer-maintained,
+ * patchy outside the cities). See `places.service.ts` for why they are never
+ * merged into one undifferentiated list.
+ *
+ * The distance-ordered LIST remains the primary surface and the map an
+ * enhancement, per the original deviation — but the map is now real rather than
+ * absent, served through this app's own tile proxy so no third-party origin is
+ * added to the CSP and the tile host never sees who is looking up a legal-aid
+ * office.
  */
 export default async function NearbyPage({
   params,
   searchParams,
 }: {
   params: Promise<{ locale: string }>;
-  searchParams: Promise<{ district?: string; type?: string; opportunitySlug?: string }>;
+  searchParams: Promise<{
+    district?: string;
+    type?: string;
+    opportunitySlug?: string;
+    lat?: string;
+    lng?: string;
+  }>;
 }) {
   const { locale } = await params;
   const query = await searchParams;
@@ -31,56 +43,31 @@ export default async function NearbyPage({
 
   const district =
     query.district ?? session?.profile?.district ?? session?.user.district ?? 'dhaka';
-  const reference = getDistrict(district);
 
-  // Widen to the division when a district has little indexed, so the list is
-  // never empty simply because one district town has few records.
-  const conditions = [];
-  if (query.type) conditions.push(eq(serviceLocations.type, query.type as never));
+  /**
+   * A shared GPS fix arrives in the URL, so a reload keeps the honest distances.
+   *
+   * Validated rather than trusted: these are numbers from a query string that
+   * become a coordinate in an outbound Overpass bounding box. A NaN would produce
+   * a malformed query, and an out-of-range value a pointless worldwide search.
+   */
+  const lat = Number(query.lat);
+  const lng = Number(query.lng);
+  const coords =
+    Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+      ? { lat, lng }
+      : null;
 
-  const primary = await db
-    .select()
-    .from(serviceLocations)
-    .where(and(eq(serviceLocations.district, district), ...conditions))
-    .limit(200);
-
-  const divisionCodes = reference
-    ? DISTRICTS.filter((d) => d.division === reference.division).map((d) => d.code)
-    : [];
-
-  const rows =
-    primary.length >= 3 || divisionCodes.length === 0
-      ? primary
-      : await db
-          .select()
-          .from(serviceLocations)
-          .where(and(inArray(serviceLocations.district, divisionCodes), ...conditions))
-          .limit(200);
-
-  let items = rows.map((location) => ({
-    id: location.id,
-    name: location.name,
-    nameBn: location.nameBn,
-    type: location.type,
-    address: location.address,
-    addressBn: location.addressBn,
-    district: location.district,
-    lat: location.lat,
-    lng: location.lng,
-    phone: location.phone,
-    officeHours: location.officeHours,
-    officeHoursBn: location.officeHoursBn,
-    services: location.services,
-    verificationStatus: location.verificationStatus,
-    distanceKm: reference
-      ? Math.round(haversineKm(reference, { lat: location.lat, lng: location.lng }) * 10) / 10
-      : null,
-  }));
-
-  if (query.opportunitySlug) {
-    items = items.filter((l) => l.services.includes(query.opportunitySlug!));
-  }
-  items.sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
+  const result = await findNearby({
+    coords,
+    districtCode: district,
+    type: (query.type as PlaceType | undefined) ?? null,
+    opportunitySlug: query.opportunitySlug ?? null,
+    // Passed in rather than imported inside the service, so the business logic
+    // holds no copy of the UI's strings.
+    typeLabel: (type) => placeLabel(type, locale === 'bn' ? 'bn' : 'en'),
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -90,11 +77,13 @@ export default async function NearbyPage({
       </header>
 
       <NearbyBrowser
-        items={items}
+        places={result.places}
         activeDistrict={district}
         activeType={query.type ?? ''}
-        mapProvider={env.NEXT_PUBLIC_MAP_PROVIDER}
-        widenedToDivision={rows !== primary}
+        osm={result.osm}
+        reference={{ ...result.reference.point, kind: result.reference.kind }}
+        widenedToDivision={result.widenedToDivision}
+        mapEnabled={env.NEXT_PUBLIC_MAP_PROVIDER !== 'none'}
       />
     </div>
   );

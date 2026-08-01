@@ -17,7 +17,7 @@ loudly**. Nothing pretends to have worked.
 | Embeddings (OpenAI) | No | BM25 only; `rebuild_embeddings` reports `skipped` |
 | SMS gateway | No | OTP shown via `OTP_DEV_ECHO`; with echo off, requesting a code **fails loudly** |
 | SMTP | No | Notifications persist and show in-app |
-| Map tiles (Mapbox / Google) | No | Distance-ordered list + an explicit "no map" banner |
+| Map + real places (**OpenStreetMap**) | No — **and needs no key**, on by default | Set `NEXT_PUBLIC_MAP_PROVIDER="none"` for a distance-ordered list and an explicit "no map" banner |
 | Object storage (S3 / R2) | No | Unused — document capture is not built |
 | Voice OTP telephony | No | Button visible, **disabled with a stated reason** |
 | OCR | No | Not built |
@@ -300,26 +300,83 @@ that does nothing. Same for the SMS toggle.
 
 ---
 
-## 7. Map tiles — Nearby Services
+## 7. Maps and real places — OpenStreetMap, no key needed
 
-**Why:** PRD §70 describes an interactive map.
+**Why:** PRD §70 describes an interactive map, and PRD Feature 12 a list of real service locations.
+
+Unlike every other service in this document, **this one is on by default and needs no account**.
+OpenStreetMap supplies both halves:
 
 ```bash
-NEXT_PUBLIC_MAP_PROVIDER="none"   # none | mapbox | google
-NEXT_PUBLIC_MAPBOX_TOKEN=""
-GOOGLE_MAPS_API_KEY=""
+NEXT_PUBLIC_MAP_PROVIDER="osm"    # osm | none | mapbox | google
+
+# Both default to OSM's public endpoints; override for anything beyond a prototype.
+MAP_TILE_URL="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+OVERPASS_URL="https://overpass-api.de/api/interpreter"
+MAP_USER_AGENT="AccessAI/1.0 (contact: you@example.com)"
+OVERPASS_CACHE_HOURS="336"        # 14 days
+OVERPASS_RADIUS_KM="25"
 ```
 
-**Without it:** a **distance-ordered list** with call and directions actions, plus an info banner
-stating that no map is configured. Distances come from district-headquarters coordinates or, with
-permission, device geolocation — and are **labelled approximate** where the reference is a centroid,
-because presenting a centroid distance as precise would send someone walking the wrong way.
+### Tiles are proxied, not fetched by the browser
 
-Geolocation denial is handled as a normal state, not an error: the list stays usable and the district
-selector remains the primary control.
+Every tile goes through `GET /api/v1/map/tile/{z}/{x}/{y}`. Four reasons, none of them
+interchangeable:
 
-Mapbox is the cheaper option at this scale and its raster tiles behave better on 2G; Google Maps has
-better Bangladesh POI coverage. Either is a drop-in; neither is required.
+1. **OSM's Tile Usage Policy requires an identifying `User-Agent`** and blocks traffic without one.
+   A browser `<img>` sends the browser's own agent and cannot be told otherwise, so direct requests
+   are both against the policy and liable to be refused.
+2. **The CSP stays at `img-src 'self'`.** Adding a third-party image origin for every page in the
+   app, permanently, to buy one feature is a bad trade when proxying costs nothing.
+3. **The tile host never sees the citizen.** No IP, no referer, no cookie belonging to someone
+   looking up a legal-aid office or a hospital. On this app that is not a small thing.
+4. **The provider becomes swappable** — `MAP_TILE_URL` moves to a paid host or a self-run cache
+   without touching the client or the CSP.
+
+Tiles are cached `public, max-age=30d, immutable`; the coordinates are range-validated against
+`2**zoom` before interpolation into the outbound URL, so a malformed path fails locally rather than
+costing an upstream round trip.
+
+### Real places come from Overpass
+
+One request per area retrieves police stations, hospitals, clinics, courts, pharmacies, banks, post
+offices, fire stations, colleges, NGO offices and government offices — a regex filter over three OSM
+keys rather than thirteen separate queries, because Overpass is a shared volunteer service with a
+fair-use policy and being rate-limited would take the feature down for everyone.
+
+Results are cached in `osm_place_cache`, keyed by a ~5.5 km grid cell so two citizens in one town
+share a lookup rather than each triggering an identical upstream query. Measured on Dhaka: **cold
+~20 s, cached ~0.5 s**, 5,240 places after de-duplication. `npm run osm:clear` empties the cache,
+which is required after changing normalisation because the cache stores post-normalisation shapes.
+
+These places are shown **alongside** the seeded corpus and labelled separately — see
+[DEVIATIONS.md](DEVIATIONS.md) §12a for why they are never merged, and for the three tag mappings
+that were deliberately refused.
+
+### Before real traffic
+
+> **Point `OVERPASS_URL` and `MAP_TILE_URL` at your own instance or a paid provider.** Both public
+> endpoints are run by volunteers on donated hardware. A prototype's traffic is within their
+> policies; a deployed application's is not. Set `MAP_USER_AGENT` to something that identifies you
+> and can be contacted, because an anonymous heavy consumer simply gets blocked.
+
+Attribution is a **licence requirement** of the ODbL, not a nicety. It is rendered visibly under the
+map, links to `openstreetmap.org/copyright`, and is asserted by a test.
+
+### Without it
+
+`NEXT_PUBLIC_MAP_PROVIDER="none"` switches off both tiles and Overpass. Nearby Services falls back
+to the seeded **distance-ordered list** with call and directions actions, and says why there is no
+map. An Overpass failure with the map on is handled the same way: the seeded list is the primary
+surface and still works, and the screen states that the real places could not be fetched rather than
+showing an error where the list belongs.
+
+Geolocation denial is a normal state, not an error — the list stays usable and the district selector
+remains the primary control. Distances are measured from the citizen's real position when shared
+(and say so), otherwise from the district town centre (and say that instead).
+
+Mapbox and Google remain drop-in alternatives: Mapbox is cheaper at this scale, Google has better
+Bangladesh POI coverage. Neither is required.
 
 ---
 

@@ -7,6 +7,7 @@ import {
   NOTIFICATION_TYPES, NOTIFICATION_CHANNELS, TIMELINE_EVENT_TYPES, DOCUMENT_SOURCE_TYPES,
   EMBEDDING_STATUSES, REVIEW_STATUSES, FEEDBACK_KINDS, FEEDBACK_STATUSES, AI_ENGINES,
   AI_REQUEST_TYPES, THEMES, NUMERAL_SYSTEMS, LIFE_EVENTS, INTENTS,
+  SERVICE_LOCATION_TYPES,
 } from '../domain/enums';
 import type { RuleSet } from '../domain/rules';
 
@@ -313,10 +314,7 @@ export const serviceLocations = sqliteTable(
     organizationId: text('organization_id').references(() => organizations.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     nameBn: text('name_bn').notNull(),
-    type: text('type', {
-      enum: ['union_office', 'upazila_office', 'district_office', 'hospital', 'clinic', 'ngo_office',
-             'bank', 'training_center', 'legal_aid', 'agriculture_office', 'pharmacy', 'digital_center'],
-    }).notNull(),
+    type: text('type', { enum: SERVICE_LOCATION_TYPES }).notNull(),
     address: text('address').notNull(),
     addressBn: text('address_bn').notNull(),
     division: text('division').notNull(),
@@ -333,6 +331,51 @@ export const serviceLocations = sqliteTable(
     createdAt: createdAt(),
   },
   (t) => [index('locations_district_idx').on(t.district), index('locations_type_idx').on(t.type)],
+);
+
+/**
+ * Cached OpenStreetMap place lookups — real hospitals, police stations, courts.
+ *
+ * A cache, not a copy. Rows are keyed by the rounded search cell and expire, so
+ * the app never becomes a stale mirror of OSM: an office that closes disappears
+ * from here within the TTL rather than being served indefinitely.
+ *
+ * It exists because Overpass is a **volunteer-run shared service** with an
+ * explicit fair-use policy. Querying it on every page view would be both abusive
+ * and unusable — a cold Overpass query takes several seconds, which is far past
+ * the point where a citizen on 2G concludes the screen is broken. So the first
+ * visitor to an area pays that cost once and everyone after reads from SQLite.
+ *
+ * The payload is stored whole rather than exploded into columns. It is upstream
+ * data with no schema guarantees, and normalising it would mean silently
+ * discarding tags on the way in — then being unable to add a feature later
+ * without re-fetching everything.
+ */
+export const osmPlaceCache = sqliteTable(
+  'osm_place_cache',
+  {
+    id: id(),
+    /**
+     * `{latCell}:{lngCell}:{radiusKm}` — coordinates rounded to a fixed grid.
+     *
+     * Rounding is what makes the cache useful. Keying on exact GPS coordinates
+     * would give every citizen their own miss, so two people in the same town
+     * would each trigger a separate upstream query for identical results.
+     */
+    cellKey: text('cell_key').notNull(),
+    /** Bounding box actually searched, kept so a stored result is auditable. */
+    south: real('south').notNull(),
+    west: real('west').notNull(),
+    north: real('north').notNull(),
+    east: real('east').notNull(),
+    /** The normalised places, as returned to the client. */
+    payload: text('payload', { mode: 'json' }).$type<unknown[]>().notNull(),
+    placeCount: integer('place_count').notNull().default(0),
+    fetchedAt: integer('fetched_at', { mode: 'timestamp_ms' }).notNull(),
+    /** Which endpoint served it, so a bad mirror can be identified later. */
+    sourceUrl: text('source_url').notNull(),
+  },
+  (t) => [uniqueIndex('osm_cache_cell_idx').on(t.cellKey)],
 );
 
 /** Source documents behind the knowledge base — PRD §Feature 19 evidence. */

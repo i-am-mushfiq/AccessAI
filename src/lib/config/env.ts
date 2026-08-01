@@ -145,7 +145,33 @@ const schema = z.object({
 
   GOOGLE_MAPS_API_KEY: optionalStr,
   NEXT_PUBLIC_MAPBOX_TOKEN: optionalStr,
-  NEXT_PUBLIC_MAP_PROVIDER: z.enum(['none', 'mapbox', 'google']).default('none'),
+  /**
+   * `osm` is the default because it is the only option that needs no account,
+   * no key and no billing relationship — the map works on a fresh clone.
+   */
+  NEXT_PUBLIC_MAP_PROVIDER: z.enum(['none', 'osm', 'mapbox', 'google']).default('osm'),
+
+  /**
+   * Raster tile template. Proxied server-side, never fetched by the browser.
+   *
+   * Defaults to OpenStreetMap's own tiles, which their Tile Usage Policy permits
+   * for low volume with attribution and an identifying User-Agent. A real
+   * deployment should point this at its own cache or a paid provider — see
+   * docs/EXTERNAL.md.
+   */
+  MAP_TILE_URL: nonEmpty.default('https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
+  /**
+   * Sent as User-Agent on every tile and Overpass request. OSM blocks traffic
+   * with no identifying agent, and rightly: an anonymous scraper cannot be asked
+   * to stop.
+   */
+  MAP_USER_AGENT: nonEmpty.default('AccessAI/1.0 (prototype; +https://github.com/i-am-mushfiq/AccessAI)'),
+  /** Overpass endpoint for real place lookups. Public instance by default. */
+  OVERPASS_URL: nonEmpty.default('https://overpass-api.de/api/interpreter'),
+  /** How long a cached Overpass result stays usable, in hours. */
+  OVERPASS_CACHE_HOURS: int(24 * 14),
+  /** Radius searched around the reference point, in kilometres. */
+  OVERPASS_RADIUS_KM: int(25),
 
   SMTP_HOST: optionalStr,
   SMTP_PORT: int(587),
