@@ -1,5 +1,8 @@
 node_modules/
 .next/
+# Scratch output from `npm run build:verify`, which keeps a verification build
+# out of the dev server's .next — see scripts/build-verify.mjs.
+.next-verify/
 out/
 build/
 dist/

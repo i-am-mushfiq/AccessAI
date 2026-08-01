@@ -36,11 +36,17 @@ substitute `copy .env.example .env.local` for the `cp`.
 Four commands, each of which either passes or tells you exactly what is wrong:
 
 ```bash
-npm run typecheck    # strict TS, noUncheckedIndexedAccess — expect zero output
-npm test             # 685 tests: engine, retrieval, voice, geo, formatting, tokens, a11y
-npm run build        # production build + lint
-npm run ai:check     # reports which AI provider is live, or "simulated"
+npm run typecheck     # strict TS, noUncheckedIndexedAccess — expect zero output
+npm test              # 685 tests: engine, retrieval, voice, geo, formatting, tokens, a11y
+npm run build:verify  # production build + lint, safe to run with `npm run dev` up
+npm run ai:check      # reports which AI provider is live, or "simulated"
 ```
+
+> `build:verify` rather than `build` on purpose. `next dev` and `next build` both
+> own `.next`, and a production build replaces the dev server's chunks — after
+> which every page fails with `Cannot find module './vendor-chunks/zod.js'` until
+> you delete the directory. `build:verify` writes to `.next-verify` instead. Use
+> plain `npm run build` for a real deploy, with nothing else running.
 
 Then walk the product itself. Sign in as **Rahima** (`01712345678` / `1234`) and:
 
@@ -73,6 +79,7 @@ test those flows without a phone.
 | `npm install` fails on `argon2` | Expected and harmless — it is an optional dependency. Auth falls back to scrypt (see [DEVIATIONS.md](docs/DEVIATIONS.md) §11). |
 | Build hangs on first run | `next/font` is fetching Inter / Noto Sans Bengali once. It needs network access **once**, then caches. |
 | `EADDRINUSE` on 3000 | Another dev server is already running. `npm run dev -- -p 3001`, or kill the old one. |
+| `Cannot find module './vendor-chunks/*.js'` | `npm run build` ran while `npm run dev` was up; the production build replaced the dev server's chunks. Stop the server, `rm -rf .next`, start it again. Use **`npm run build:verify`** next time — it builds into `.next-verify` and leaves the dev server alone. |
 | Sign-in says the account does not exist | The seed did not run. `npm run db:seed -- --reset-users`. |
 | Pages load but every list is empty | Schema without data. `npm run setup` again — the seed is idempotent. |
 | "Simulated AI" badge everywhere | Correct with no API key. Add one to `.env.local` to see live prose; **the eligibility decisions, programmes and citations do not change**. |
@@ -157,7 +164,7 @@ Each degrades to a stated, usable fallback rather than a broken control.
 
 ```bash
 npm run dev          # dev server
-npm run build        # production build
+npm run build        # production build (stop the dev server first — see build:verify)
 npm start            # serve the build
 npm run typecheck    # tsc --noEmit (strict, noUncheckedIndexedAccess)
 npm test             # 685 tests: engine, voice, geo, confidence, formatting, tokens, a11y
