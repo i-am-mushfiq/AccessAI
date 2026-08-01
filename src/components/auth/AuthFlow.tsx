@@ -13,6 +13,7 @@ import { Banner, InfoPanel } from '@/components/primitives/Banner';
 import { ProgressSteps } from '@/components/primitives/States';
 import { CheckboxRow } from '@/components/primitives/Choice';
 import { DictateDigits } from '@/components/voice/DictateDigits';
+import { safeNextPath } from '@/lib/routing/next-path';
 import { DISTRICTS } from '@/lib/domain/geography';
 import { detectOperator, formatPhone, maskPhone, normalisePhone } from '@/lib/format/numerals';
 import type { AppLocale } from '@/i18n/routing';
@@ -69,6 +70,23 @@ export function AuthFlow({ mode, nextPath }: { readonly mode: AuthMode; readonly
   const [useCodeInstead, setUseCodeInstead] = useState(mode !== 'login');
 
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /**
+   * Where to land after signing in.
+   *
+   * Sanitised HERE rather than trusted from the query string, for two reasons.
+   *
+   * It must be locale-RELATIVE: `router` is next-intl's locale-aware one and adds
+   * the prefix itself, so a `next` of `/en/nearby` produced `/en/en/nearby` — a
+   * route that does not exist, which then 404'd into a framework crash about
+   * missing `<html>` tags. Middleware always sent a relative path; the renew route
+   * sent a prefixed one, and only one of them could be right.
+   *
+   * And it is attacker-controlled: this value is navigated to the instant a
+   * citizen finishes entering their PIN, which makes it the most valuable open
+   * redirect in the app. `safeNextPath` refuses anything that is not a local path.
+   */
+  const destination = safeNextPath(nextPath, '/dashboard') as '/dashboard';
 
   const startCountdown = useCallback((ms: number) => {
     setSecondsLeft(Math.ceil(ms / 1000));
@@ -129,7 +147,7 @@ export function AuthFlow({ mode, nextPath }: { readonly mode: AuthMode; readonly
     setFieldErrors({});
     try {
       await api.post('/auth/login', { phone, pin }, { retryOnUnauthenticated: false });
-      router.replace((nextPath as '/dashboard') ?? '/dashboard');
+      router.replace(destination);
     } catch (error) {
       handleError(error);
     } finally {
@@ -145,7 +163,7 @@ export function AuthFlow({ mode, nextPath }: { readonly mode: AuthMode; readonly
     try {
       if (mode === 'login') {
         await api.post('/auth/login', { phone, code }, { retryOnUnauthenticated: false });
-        router.replace((nextPath as '/dashboard') ?? '/dashboard');
+        router.replace(destination);
         return;
       }
       // Registration and reset both need the code verified alongside the new
@@ -178,7 +196,7 @@ export function AuthFlow({ mode, nextPath }: { readonly mode: AuthMode; readonly
       } else {
         await api.post('/auth/pin', { phone, code, pin }, { retryOnUnauthenticated: false });
       }
-      router.replace((nextPath as '/dashboard') ?? '/dashboard');
+      router.replace(destination);
     } catch (error) {
       handleError(error);
       // A rejected code sends the citizen back one step rather than trapping

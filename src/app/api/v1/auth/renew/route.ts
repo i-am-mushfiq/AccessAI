@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { handle } from '@/lib/http/response';
 import { setAuthCookies, clearAuthCookies, COOKIE_NAMES } from '@/lib/http/cookies';
 import { clientIp } from '@/lib/http/rate-limit';
+import { safeNextPath } from '@/lib/routing/next-path';
 import { refresh } from '@/modules/auth/auth.service';
 
 /**
@@ -51,20 +52,22 @@ function isSameOrigin(request: NextRequest): boolean {
   }
 }
 
-/** Rejects anything that could send the citizen off-site. */
-function safeNext(raw: string | null, fallback: string): string {
-  if (!raw) return fallback;
-  // A protocol-relative `//evil.com` is a valid URL to a browser, and a
-  // backslash is normalised to a slash by some of them.
-  if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return fallback;
-  if (raw.startsWith('/api/')) return fallback;
-  return raw;
-}
-
 export async function GET(request: NextRequest) {
   return handle(async () => {
     const locale = request.nextUrl.searchParams.get('locale') === 'en' ? 'en' : 'bn';
-    const destination = safeNext(request.nextUrl.searchParams.get('next'), `/${locale}/dashboard`);
+
+    /**
+     * Two forms of the same destination, and they are not interchangeable.
+     *
+     * `relative` (`/nearby`) is the ?next= contract — the login page feeds it to
+     * next-intl's router, which adds the locale itself. Handing it a prefixed path
+     * produced `/en/en/nearby`, a route that does not exist.
+     *
+     * `absolute` (`/en/nearby`) is for the redirects issued from here, which are
+     * plain HTTP Location headers with no locale awareness at all.
+     */
+    const relative = safeNextPath(request.nextUrl.searchParams.get('next'), '/dashboard');
+    const absolute = `/${locale}${relative === '/' ? '' : relative}`;
     const loginUrl = new URL(`/${locale}/login`, request.nextUrl.origin);
 
     const bounce = (to: string) => NextResponse.redirect(new URL(to, request.nextUrl.origin), 303);
@@ -72,14 +75,14 @@ export async function GET(request: NextRequest) {
     if (!isSameOrigin(request)) {
       // Do not rotate, do not clear: an off-site link must not be able to touch
       // the session at all. Just send them to the page they asked for.
-      return bounce(destination);
+      return bounce(absolute);
     }
 
     const store = await cookies();
     const token = store.get(COOKIE_NAMES.refresh)?.value;
 
     if (!token) {
-      loginUrl.searchParams.set('next', destination);
+      loginUrl.searchParams.set('next', relative);
       return bounce(`${loginUrl.pathname}${loginUrl.search}`);
     }
 
@@ -88,7 +91,7 @@ export async function GET(request: NextRequest) {
       // `renewed` is a one-shot marker. If the middleware sees it and STILL has
       // no valid access cookie, it sends the citizen to login rather than back
       // here — otherwise a cookie that cannot be set would loop forever.
-      const target = new URL(destination, request.nextUrl.origin);
+      const target = new URL(absolute, request.nextUrl.origin);
       target.searchParams.set('renewed', '1');
       const response = NextResponse.redirect(target, 303);
       setAuthCookies(response, result);
@@ -98,7 +101,7 @@ export async function GET(request: NextRequest) {
       // outside the race window). Clear both cookies so the browser stops
       // presenting a credential that can never work, and say where they were
       // headed so signing in returns them there.
-      loginUrl.searchParams.set('next', destination);
+      loginUrl.searchParams.set('next', relative);
       loginUrl.searchParams.set('expired', '1');
       const response = bounce(`${loginUrl.pathname}${loginUrl.search}`);
       clearAuthCookies(response);
