@@ -81,6 +81,8 @@ export const userProfiles = sqliteTable(
     landOwnershipDecimals: real('land_ownership_decimals'),
     isStudent: integer('is_student', { mode: 'boolean' }),
     hasBusiness: integer('has_business', { mode: 'boolean' }),
+    /** Whether the citizen is connected to farming or agricultural work. */
+    hasFarmingActivity: integer('has_farming_activity', { mode: 'boolean' }),
     businessType: text('business_type'),
     employees: integer('employees'),
     farmSizeDecimals: real('farm_size_decimals'),
@@ -101,6 +103,8 @@ export const userProfiles = sqliteTable(
     lifeEvents: text('life_events', { mode: 'json' }).$type<
       { event: string; detectedAt: number; source: 'conversation' | 'profile' | 'manual' }[]
     >(),
+    /** Set once the short first-run recommendation flow has been completed. */
+    onboardingCompletedAt: integer('onboarding_completed_at', { mode: 'timestamp_ms' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -128,6 +132,26 @@ export const userSettings = sqliteTable(
       .notNull().default('anonymised_analytics'),
     updatedAt: updatedAt(),
   },
+);
+
+/**
+ * One browser/device can have one active endpoint. Keeping subscriptions
+ * separate from notification rows lets push remain an optional delivery
+ * channel without changing the durable in-app notification history.
+ */
+export const pushSubscriptions = sqliteTable(
+  'push_subscriptions',
+  {
+    id: id(),
+    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    userAgent: text('user_agent'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('push_subscriptions_endpoint_uq').on(t.endpoint), index('push_subscriptions_user_idx').on(t.userId)],
 );
 
 /** Refresh-token family. Rotation + reuse detection (PRD §43). */
@@ -773,6 +797,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   conversations: many(conversations),
   saved: many(savedOpportunities),
   notifications: many(notifications),
+  pushSubscriptions: many(pushSubscriptions),
   plans: many(actionPlans),
 }));
 

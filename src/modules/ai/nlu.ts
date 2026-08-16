@@ -250,10 +250,10 @@ export function extractEntities(text: string): ExtractedEntities {
   }
 
   /* ---- gender ---- */
-  if (/\b(?:মহিলা|নারী|মেয়ে|woman|female|আমি একজন মহিলা|স্ত্রী)\b/.test(haystack) || /বিধবা|widow/.test(haystack)) {
+  if (/(?:মহিলা|নারী|মেয়ে|আমি একজন মহিলা|স্ত্রী)/.test(haystack) || /\b(?:woman|female)\b/.test(haystack) || /বিধবা|widow/.test(haystack)) {
     profile.gender = 'female';
     fields.push('gender');
-  } else if (/\b(?:পুরুষ|ছেলে|man|male)\b/.test(haystack)) {
+  } else if (/(?:পুরুষ|ছেলে)/.test(haystack) || /\b(?:man|male)\b/.test(haystack)) {
     profile.gender = 'male';
     fields.push('gender');
   }
@@ -275,7 +275,7 @@ export function extractEntities(text: string): ExtractedEntities {
 
   /* ---- occupation ---- */
   const occupationMap: readonly [RegExp, EligibilityProfile['occupation']][] = [
-    [/কৃষক|চাষি|farmer|farming|চাষাবাদ/, 'farmer'],
+    [/কৃষক|চাষি|কৃষিকাজ|farmer|farming|farm\b|চাষাবাদ/, 'farmer'],
     [/শিক্ষার্থী|ছাত্র|ছাত্রী|student|পড়াশোনা করি|পড়ছি/, 'student'],
     [/গৃহিণী|housewife|homemaker|গৃহকর্মী নই/, 'homemaker'],
     [/দিনমজুর|day labour|day labor|শ্রমিক/, 'day_labourer'],
@@ -347,9 +347,14 @@ export function extractEntities(text: string): ExtractedEntities {
   }
 
   /* ---- pregnancy ---- */
-  if (/গর্ভবতী|সন্তানসম্ভবা|pregnant|pregnancy|বাচ্চা হবে/.test(haystack)) {
+  const explicitlyMale = /(?:পুরুষ|ছেলে|\bman\b|\bmale\b)/.test(haystack);
+  const pregnancyMentioned = /গর্ভবতী|সন্তানসম্ভবা|pregnant|pregnancy|বাচ্চা হবে/.test(haystack);
+  const pregnancyDenied =
+    /(?:গর্ভবতী|সন্তানসম্ভবা|pregnant|pregnancy|বাচ্চা হবে)\s*(?:নই|নয়|না|not)/.test(haystack) ||
+    /(?:নই|নয়|না|not)\s*(?:গর্ভবতী|সন্তানসম্ভবা|pregnant|pregnancy|বাচ্চা হবে)/.test(haystack);
+  if (pregnancyMentioned && !pregnancyDenied) {
     profile.isPregnant = true;
-    profile.gender = 'female';
+    if (!explicitlyMale) profile.gender = 'female';
     fields.push('isPregnant');
   }
 
@@ -402,6 +407,14 @@ export function extractEntities(text: string): ExtractedEntities {
   if (/ব্যবসা আছে|দোকান আছে|i run a business|my shop|my business/.test(haystack)) {
     profile.hasBusiness = true;
     fields.push('hasBusiness');
+  }
+  const farmingMentioned = /কৃষি|কৃষক|চাষ|চাষাবাদ|ফসল|farming|farmer|farm\b|agriculture|crop/.test(haystack);
+  const farmingDenied =
+    /(?:কৃষি|কৃষক|চাষ|চাষাবাদ|ফসল|farming|farmer|farm\b|agriculture|crop)[^,।.!?]{0,20}(?:করি না|নই|নয়|না|not|don't|do not)/.test(haystack) ||
+    /(?:করি না|নই|নয়|না|not|don't|do not)[^,।.!?]{0,20}(?:কৃষি|কৃষক|চাষ|চাষাবাদ|ফসল|farming|farmer|farm\b|agriculture|crop)/.test(haystack);
+  if (farmingMentioned) {
+    profile.hasFarmingActivity = !farmingDenied;
+    fields.push('hasFarmingActivity');
   }
 
   return { profile, fields: [...new Set(fields)] };

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lte, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db/client';
 import {
   savedOpportunities, savedStatusHistory, actionPlans, actionPlanTasks,
@@ -6,6 +6,7 @@ import {
 } from '@/lib/db/schema';
 import type { SavedStatus as SavedStatusEnum, TaskStatus, NotificationType } from '@/lib/domain/enums';
 import { addDays, startOfDay } from '@/lib/format/dates';
+import { sendPushNotification } from '@/modules/notifications/push.service';
 
 /**
  * Citizen activity: saved programmes, action plans, timeline, notifications.
@@ -189,7 +190,20 @@ export async function generateActionPlan(userId: string, opportunityId: string) 
       .from(actionPlanTasks)
       .where(eq(actionPlanTasks.planId, existing.id))
       .orderBy(asc(actionPlanTasks.sortOrder));
-    return { plan: existing, tasks, created: false };
+    const existingTimelineEvents = await db
+      .select({ id: timelineEvents.id })
+      .from(timelineEvents)
+      .leftJoin(actionPlanTasks, eq(timelineEvents.taskId, actionPlanTasks.id))
+      .where(
+        and(
+          eq(timelineEvents.userId, userId),
+          or(
+            eq(actionPlanTasks.planId, existing.id),
+            and(eq(timelineEvents.opportunityId, opportunityId), eq(timelineEvents.type, 'deadline')),
+          ),
+        ),
+      );
+    return { plan: existing, tasks, created: false, timelineEventIds: existingTimelineEvents.map((event) => event.id) };
   }
 
   const [opportunity] = await db.select().from(opportunities).where(eq(opportunities.id, opportunityId)).limit(1);
@@ -271,8 +285,9 @@ export async function generateActionPlan(userId: string, opportunityId: string) 
   const inserted = tasks.length > 0 ? await db.insert(actionPlanTasks).values(tasks).returning() : [];
 
   // Mirror the plan onto the timeline so the calendar and the plan agree.
+  const timelineEventIds: string[] = [];
   if (inserted.length > 0) {
-    await db.insert(timelineEvents).values(
+    const insertedTimelineEvents = await db.insert(timelineEvents).values(
       inserted
         .filter((t) => t.dueDate)
         .map((t) => ({
@@ -285,11 +300,12 @@ export async function generateActionPlan(userId: string, opportunityId: string) 
           eventDate: t.dueDate!,
           source: 'system' as const,
         })),
-    );
+    ).returning({ id: timelineEvents.id });
+    timelineEventIds.push(...insertedTimelineEvents.map((event) => event.id));
   }
 
   if (opportunity.deadline) {
-    await db.insert(timelineEvents).values({
+    const [deadlineEvent] = await db.insert(timelineEvents).values({
       userId,
       opportunityId,
       type: 'deadline',
@@ -297,12 +313,13 @@ export async function generateActionPlan(userId: string, opportunityId: string) 
       titleBn: `শেষ তারিখ: ${opportunity.titleBn}`,
       eventDate: opportunity.deadline,
       source: 'system',
-    });
+    }).returning({ id: timelineEvents.id });
+    if (deadlineEvent) timelineEventIds.push(deadlineEvent.id);
   }
 
   await saveOpportunity({ userId, opportunityId, status: 'preparing' });
 
-  return { plan: plan!, tasks: inserted, created: true };
+  return { plan: plan!, tasks: inserted, created: true, timelineEventIds };
 }
 
 export async function listActionPlans(userId: string) {
@@ -399,9 +416,10 @@ export async function listTimeline(input: {
   if (input.to) conditions.push(lte(timelineEvents.eventDate, input.to));
 
   return db
-    .select({ event: timelineEvents, opportunity: opportunities })
+    .select({ event: timelineEvents, opportunity: opportunities, planId: actionPlanTasks.planId })
     .from(timelineEvents)
     .leftJoin(opportunities, eq(timelineEvents.opportunityId, opportunities.id))
+    .leftJoin(actionPlanTasks, eq(timelineEvents.taskId, actionPlanTasks.id))
     .where(and(...conditions))
     .orderBy(asc(timelineEvents.eventDate))
     .limit(input.limit ?? 200);
@@ -469,6 +487,26 @@ export async function createNotification(input: {
       channel: 'in_app',
     })
     .returning();
+
+  // In-app persistence is the source of truth. Browser push is an optional,
+  // best-effort delivery channel and must never make this operation fail.
+  if (row && !input.scheduledAt) {
+    void sendPushNotification({
+      userId: input.userId,
+      type: input.type,
+      title: row.title,
+      titleBn: row.titleBn,
+      body: row.body,
+      bodyBn: row.bodyBn,
+      actionUrl: row.actionUrl,
+    }).catch((error: unknown) => {
+      // The push service already avoids logging subscription material. Keep
+      // this catch so an unavailable provider cannot become an unhandled
+      // rejection in the request that created the in-app notification.
+      // eslint-disable-next-line no-console
+      console.error('[push] optional delivery skipped', error instanceof Error ? error.message : 'unknown error');
+    });
+  }
   return row!;
 }
 
@@ -551,6 +589,50 @@ export async function generateDeadlineReminders(userId: string, withinDays = 7):
         'Check that your documents are ready before the deadline.',
         'শেষ তারিখের আগে আপনার কাগজপত্র প্রস্তুত আছে কি না দেখে নিন।',
       ],
+      actionUrl,
+    });
+    created += 1;
+  }
+  return created;
+}
+
+/** Reminds a citizen about pending action-plan tasks due soon. */
+export async function generateTimelineReminders(userId: string, withinDays = 1): Promise<number> {
+  const now = new Date();
+  const horizon = addDays(now, withinDays);
+  const upcoming = await db
+    .select({
+      taskId: actionPlanTasks.id,
+      planId: actionPlanTasks.planId,
+      title: actionPlanTasks.title,
+      titleBn: actionPlanTasks.titleBn,
+      dueDate: actionPlanTasks.dueDate,
+    })
+    .from(actionPlanTasks)
+    .innerJoin(actionPlans, eq(actionPlanTasks.planId, actionPlans.id))
+    .where(and(
+      eq(actionPlans.userId, userId),
+      eq(actionPlans.status, 'active'),
+      eq(actionPlanTasks.status, 'pending'),
+      gte(actionPlanTasks.dueDate, now),
+      lte(actionPlanTasks.dueDate, horizon),
+    ));
+  if (upcoming.length === 0) return 0;
+
+  const existing = await db
+    .select({ actionUrl: notifications.actionUrl })
+    .from(notifications)
+    .where(and(eq(notifications.userId, userId), eq(notifications.type, 'timeline_reminder')));
+  const alreadyNotified = new Set(existing.map((item) => item.actionUrl));
+  let created = 0;
+  for (const task of upcoming) {
+    const actionUrl = `/timeline?focus=${encodeURIComponent(task.planId)}`;
+    if (alreadyNotified.has(actionUrl)) continue;
+    await createNotification({
+      userId,
+      type: 'timeline_reminder',
+      title: ['Action plan task due soon', `কাজের পরিকল্পনার কাজ শিগগির করতে হবে`],
+      body: [task.title, task.titleBn],
       actionUrl,
     });
     created += 1;

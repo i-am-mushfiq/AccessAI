@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { CheckCircle2, XCircle, AlertTriangle, Info, Undo2, X } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, Info, Undo2, ArrowRight, X } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 
 /**
@@ -24,6 +24,7 @@ export interface ToastInput {
   readonly tone: ToastTone;
   readonly message: string;
   readonly undo?: { readonly label: string; readonly onUndo: () => void };
+  readonly action?: { readonly label: string; readonly onAction: () => void };
   readonly durationMs?: number;
 }
 
@@ -58,7 +59,7 @@ export function ToastProvider({ children }: { readonly children: ReactNode }) {
       const id = crypto.randomUUID();
       // An undoable toast lingers: 5 s is not enough time for an unhurried
       // citizen to notice, read, and decide to reverse an action.
-      const duration = input.durationMs ?? (input.undo ? 9000 : 5000);
+      const duration = input.durationMs ?? (input.undo || input.action ? 9000 : 5000);
       setToasts((current) => [...current.slice(-2), { ...input, id }]);
       timers.current.set(
         id,
@@ -99,7 +100,23 @@ export function ToastProvider({ children }: { readonly children: ReactNode }) {
                 <Icon size={24} className={cn('icon mt-0.5 shrink-0', className)} aria-hidden="true" />
                 <p className="type-body-lg min-w-0 flex-1 text-text-primary">{toast.message}</p>
 
-                {toast.undo ? (
+                {toast.action ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toast.action?.onAction();
+                      dismiss(toast.id);
+                    }}
+                    className={cn(
+                      'type-label-lg -my-1 inline-flex min-h-12 shrink-0 items-center gap-2 rounded-md px-3',
+                      'text-text-brand hover:bg-surface-brand-subtle active:bg-ramp-green-100',
+                      'focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2',
+                    )}
+                  >
+                    {toast.action.label}
+                    <ArrowRight size={20} className="icon" aria-hidden="true" />
+                  </button>
+                ) : toast.undo ? (
                   <button
                     type="button"
                     onClick={() => {

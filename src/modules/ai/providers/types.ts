@@ -34,6 +34,15 @@ export interface GenerateResult {
   readonly error?: string;
 }
 
+export type ProviderFailureCode =
+  | 'missing-api-key'
+  | 'authentication'
+  | 'unsupported-model'
+  | 'rate-limit'
+  | 'network-unavailable'
+  | 'malformed-response'
+  | 'provider-error';
+
 export interface EmbedResult {
   readonly vectors: readonly number[][];
   readonly model: string;
@@ -55,10 +64,39 @@ export class ProviderError extends Error {
     message: string,
     readonly status?: number,
     readonly retryable = false,
+    readonly code: ProviderFailureCode = 'provider-error',
   ) {
     super(message);
     this.name = 'ProviderError';
   }
+}
+
+function codeForStatus(status: number, body = ''): ProviderFailureCode {
+  if (status === 401 || status === 403) return 'authentication';
+  if (status === 404) return 'unsupported-model';
+  if (status === 429) return 'rate-limit';
+  if (status === 400 && /model.{0,40}(invalid|not found|does not exist)|invalid.{0,40}model/i.test(body)) {
+    return 'unsupported-model';
+  }
+  if (status >= 500) return 'network-unavailable';
+  return 'provider-error';
+}
+
+/** Safe operator-facing failure text; upstream bodies are intentionally omitted. */
+export function safeProviderFailure(error: unknown): { code: ProviderFailureCode; status?: number; message: string } {
+  if (error instanceof ProviderError) {
+    const labels: Record<ProviderFailureCode, string> = {
+      'missing-api-key': 'Provider API key is missing.',
+      authentication: 'Provider authentication failed.',
+      'unsupported-model': 'Configured model is not available at the provider.',
+      'rate-limit': 'Provider rate limit reached.',
+      'network-unavailable': 'Provider is unavailable or the network timed out.',
+      'malformed-response': 'Provider returned a malformed response.',
+      'provider-error': 'Provider request failed.',
+    };
+    return { code: error.code, ...(error.status ? { status: error.status } : {}), message: labels[error.code] };
+  }
+  return { code: 'network-unavailable', message: 'Provider is unavailable or the network timed out.' };
 }
 
 /** Shared fetch with timeout + bounded retry for transient upstream failures. */
@@ -86,16 +124,18 @@ export async function postJson(
       });
 
       if (!response.ok) {
-        const text = await response.text().catch(() => '');
+        const upstreamBody = await response.text().catch(() => '');
         // 4xx is a request problem — retrying cannot help and only adds latency.
         const retryable = response.status === 429 || response.status >= 500;
-        throw new ProviderError(
-          `Provider responded ${response.status}: ${text.slice(0, 300)}`,
-          response.status,
-          retryable,
-        );
+        // Do not retain or propagate the response body: providers sometimes
+        // echo request metadata, account identifiers, or secret-bearing detail.
+        throw new ProviderError('Provider request failed', response.status, retryable, codeForStatus(response.status, upstreamBody));
       }
-      return await response.json();
+      try {
+        return await response.json();
+      } catch {
+        throw new ProviderError('Provider returned malformed JSON', response.status, false, 'malformed-response');
+      }
     } catch (error) {
       lastError = error;
       const retryable = error instanceof ProviderError ? error.retryable : true;
@@ -107,5 +147,6 @@ export async function postJson(
     }
   }
 
-  throw lastError instanceof Error ? lastError : new ProviderError('Provider request failed');
+  if (lastError instanceof ProviderError) throw lastError;
+  throw new ProviderError('Provider is unavailable or the network timed out.', undefined, true, 'network-unavailable');
 }

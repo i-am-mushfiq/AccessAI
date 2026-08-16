@@ -124,6 +124,8 @@ session family**, which is the correct response to a stolen token.
 | `GET` | `/timeline` | session | `?month=YYYY-MM`. Reconciles deadlines and creates due reminders inline, so the screen is never stale between job runs |
 | `GET` | `/notifications` | session | `?unread=true`; returns `{items, unread}` |
 | `PATCH` | `/notifications` | session | `{ids}` or `{all:true}` |
+| `POST` | `/notifications/push` | session | Registers the caller's validated browser push subscription; requires configured VAPID keys |
+| `DELETE` | `/notifications/push` | session | Removes only the caller's endpoint and disables that browser's push preference |
 | `GET` | `/locations` | optional session | `?district= \| ?lat=&lng=` plus `type`, `opportunitySlug`, `limit`. Falls back to the signed-in citizen's district when no location is given. Distances from a district centroid are **labelled approximate** |
 | `GET` | `/life-events` | none | The 15-event catalogue with bn/en labels — powers the landing grid |
 | `POST` | `/feedback` | session + `default` limit | `{kind, messageId?, opportunityId?, rating?, comment?}` — PRD §34. Lands in the moderation queue |

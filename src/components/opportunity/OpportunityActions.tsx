@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation } from '@tanstack/react-query';
 import { Bookmark, BookmarkCheck, ClipboardList, ExternalLink, Flag } from 'lucide-react';
-import { useRouter } from '@/i18n/navigation';
+import { Link, useRouter } from '@/i18n/navigation';
 import { useVoiceActions } from '@/components/providers/VoiceProvider';
 import { api, ApiError } from '@/lib/api/client';
 import { Button } from '@/components/primitives/Button';
@@ -51,6 +51,7 @@ export function OpportunityActions({
   const [reportSheet, setReportSheet] = useState(false);
   const [status, setStatus] = useState<SavedStatus>((saved?.status as SavedStatus) ?? 'interested');
   const [comment, setComment] = useState('');
+  const [createdPlan, setCreatedPlan] = useState<{ readonly id: string; readonly created: boolean } | null>(null);
 
   const save = useMutation({
     mutationFn: () => api.post<{ saved: { id: string; status: string } }>('/saved', { opportunityId }),
@@ -88,10 +89,21 @@ export function OpportunityActions({
   });
 
   const createPlan = useMutation({
-    mutationFn: () => api.post<{ plan: { id: string } }>('/action-plans', { opportunityId }),
-    onSuccess: () => {
-      toast.show({ tone: 'success', message: tc('saved') });
-      router.push('/saved');
+    mutationFn: () => api.post<{
+      plan: { id: string };
+      created: boolean;
+      timelineEventIds: readonly string[];
+    }>('/action-plans', { opportunityId }),
+    onSuccess: (data) => {
+      setCreatedPlan({ id: data.plan.id, created: data.created });
+      toast.show({
+        tone: 'success',
+        message: data.created ? t('planCreatedSuccess') : t('planAlreadyExists'),
+        action: {
+          label: t('viewTimeline'),
+          onAction: () => router.push(`/timeline?focus=${encodeURIComponent(data.plan.id)}`),
+        },
+      });
     },
     onError: (error) =>
       toast.show({ tone: 'error', message: error instanceof ApiError ? error.message : te('genericBody') }),
@@ -161,7 +173,9 @@ export function OpportunityActions({
           disabledReason={
             hasSteps ? undefined : tc('unknown')
           }
-          onClick={() => createPlan.mutate()}
+          onClick={() => {
+            if (!createPlan.isPending) createPlan.mutate();
+          }}
           leadingIcon={<ClipboardList size={24} className="icon" />}
         >
           {t('createPlan')}
@@ -180,7 +194,7 @@ export function OpportunityActions({
             {current ? tc('saved') : tc('save')}
           </Button>
 
-          {current ? (
+        {current ? (
             <Button variant="secondary" onClick={() => setStatusSheet(true)}>
               {ts('changeStatus')}: {statusLabels[(current.status as SavedStatus) ?? 'interested']}
             </Button>
@@ -197,6 +211,26 @@ export function OpportunityActions({
             <ExternalLink size={20} className="icon" aria-hidden="true" />
             {t('officialSite')}
           </a>
+        ) : null}
+
+        {createdPlan ? (
+          <div role="status" className="flex flex-col gap-3 rounded-md border border-stroke-brand bg-surface-brand-subtle p-4">
+            <p className="type-body-lg text-text-primary">{createdPlan.created ? t('planCreatedSuccess') : t('planAlreadyExists')}</p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Link
+                href={`/timeline?focus=${encodeURIComponent(createdPlan.id)}`}
+                className="inline-flex min-h-12 flex-1 items-center justify-center rounded-md bg-ramp-green-600 px-4 type-label-lg text-text-on-brand hover:bg-ramp-green-700 focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
+              >
+                {t('viewTimeline')}
+              </Link>
+              <Link
+                href="/saved"
+                className="inline-flex min-h-12 flex-1 items-center justify-center rounded-md border-1.5 border-stroke px-4 type-label-lg text-text-brand hover:bg-surface-brand-subtle focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
+              >
+                {t('viewSavedOpportunity')}
+              </Link>
+            </div>
+          </div>
         ) : null}
 
         <Button variant="tertiary" size="md" onClick={() => setReportSheet(true)} leadingIcon={<Flag size={20} className="icon" />}>

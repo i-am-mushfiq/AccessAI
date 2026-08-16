@@ -7,7 +7,8 @@ import {
 import { useRouter, usePathname } from '@/i18n/navigation';
 import { usePreferences } from './PreferencesProvider';
 import {
-  detectVoiceSupport, startRecognition, startRecording, speakLocally, stopSpeaking,
+  detectVoiceSupport, queryMicrophonePermission, mapRecordingError,
+  startRecognition, startRecording, speakLocally, stopSpeaking,
   textForSpeech, whenVoicesReady, hasBanglaVoice,
   type RecognitionError, type RecognitionHandle, type VoiceSupport,
 } from '@/lib/voice/speech';
@@ -83,7 +84,9 @@ export interface VoiceContextValue {
   /** Whether the microphone can be used at all, by any route. */
   readonly canListen: boolean;
   /** Why not, when it cannot. A catalogue key. */
-  readonly unavailableReason: 'disabled' | 'insecure' | 'unsupported' | null;
+  readonly unavailableReason:
+    | 'disabled' | 'insecure' | 'permission-denied' | 'no-microphone'
+    | 'browser-unavailable' | 'server-unavailable' | 'media-recorder-unavailable' | 'unsupported' | null;
   readonly interim: string;
   readonly transcript: string;
   readonly lastError: RecognitionError | null;
@@ -92,6 +95,8 @@ export interface VoiceContextValue {
   readonly suggestions: readonly VoiceCommand[];
   readonly speaking: boolean;
   readonly canSpeak: boolean;
+  /** Input path for the current attempt; server means audio will be uploaded. */
+  readonly activeInput: 'browser' | 'server' | 'typed' | null;
 
   start(): void;
   /**
@@ -139,7 +144,8 @@ export function VoiceProvider({
   const { locale, voiceEnabled } = usePreferences();
 
   const [support, setSupport] = useState<VoiceSupport>({
-    recognition: false, recording: false, synthesis: false, banglaVoice: false, secureContext: false,
+    recognition: false, microphone: false, microphonePermission: 'unknown', mediaRecorder: false,
+    recording: false, synthesis: false, banglaVoice: false, secureContext: false,
   });
   const [serverStt, setServerStt] = useState<boolean | null>(null);
   const [serverTts, setServerTts] = useState(false);
@@ -152,9 +158,14 @@ export function VoiceProvider({
   const [suggestions, setSuggestions] = useState<readonly VoiceCommand[]>([]);
   const [speaking, setSpeaking] = useState(false);
   const [helpVisible, setHelpVisible] = useState(false);
+  const [activeInput, setActiveInput] = useState<'browser' | 'server' | 'typed' | null>(null);
 
   const recognitionRef = useRef<RecognitionHandle | null>(null);
   const recordingRef = useRef<Awaited<ReturnType<typeof startRecording>> | null>(null);
+  /** Prevent one native failure from starting more than one server recording. */
+  const fallbackAttemptedRef = useRef(false);
+  const transcribeAbortRef = useRef<AbortController | null>(null);
+  const recordingCancelRequestedRef = useRef(false);
   const actionsRef = useRef<Record<string, VoiceActionHandler>>({});
   const readableRef = useRef<(() => string) | null>(null);
   /** True while a confirmation is open, so the next utterance is read as yes/no. */
@@ -171,6 +182,9 @@ export function VoiceProvider({
   useEffect(() => {
     let cancelled = false;
     setSupport(detectVoiceSupport());
+    void queryMicrophonePermission().then((microphonePermission) => {
+      if (!cancelled) setSupport((current) => ({ ...current, microphonePermission }));
+    });
 
     // Voices arrive asynchronously; a Bangla voice present on the device is often
     // invisible on the first synchronous check.
@@ -210,7 +224,8 @@ export function VoiceProvider({
   const useBrowserRecognition = support.recognition && mode !== 'server';
   const useServerStt = support.recording && serverStt === true && mode !== 'browser';
 
-  const canListen = voiceEnabled && support.secureContext && (useBrowserRecognition || useServerStt);
+  const microphoneBlocked = support.microphonePermission === 'denied';
+  const canListen = voiceEnabled && support.secureContext && !microphoneBlocked && (useBrowserRecognition || useServerStt);
 
   const unavailableReason: VoiceContextValue['unavailableReason'] = !voiceEnabled
     ? 'disabled'
@@ -218,7 +233,15 @@ export function VoiceProvider({
       ? 'insecure'
       : canListen
         ? null
-        : 'unsupported';
+        : microphoneBlocked
+          ? 'permission-denied'
+          : support.microphone && support.mediaRecorder && serverStt === false && !support.recognition
+            ? 'server-unavailable'
+            : support.microphone && !support.mediaRecorder
+              ? 'media-recorder-unavailable'
+              : !support.recognition && serverStt === false
+                ? 'browser-unavailable'
+                : 'unsupported';
 
   /**
    * Read-aloud is possible if EITHER the server can synthesise or the device has
@@ -445,6 +468,9 @@ export function VoiceProvider({
   const transcribeOnServer = useCallback(
     async (clip: Blob) => {
       setState('transcribing');
+      const controller = new AbortController();
+      transcribeAbortRef.current = controller;
+      const timeout = window.setTimeout(() => controller.abort(), 50_000);
       try {
         const form = new FormData();
         form.append('audio', clip, 'speech.webm');
@@ -458,13 +484,17 @@ export function VoiceProvider({
           method: 'POST',
           body: form,
           credentials: 'same-origin',
+          signal: controller.signal,
         });
         const payload = (await response.json()) as
           | { success: true; data: { text: string; heardNothing: boolean } }
           | { success: false; error: { message: string } };
 
         if (!payload.success) {
-          setLastError({ kind: 'unknown', retryable: true });
+          setLastError({
+            kind: response.status === 503 ? 'server-unavailable' : 'unknown',
+            retryable: response.status !== 503,
+          });
           setState('error');
           return;
         }
@@ -475,12 +505,33 @@ export function VoiceProvider({
         }
         process(payload.data.text);
       } catch {
+        if (controller.signal.aborted) return;
         setLastError({ kind: 'network', retryable: true });
         setState('error');
+      } finally {
+        window.clearTimeout(timeout);
+        if (transcribeAbortRef.current === controller) transcribeAbortRef.current = null;
       }
     },
     [locale, process],
   );
+
+  const startServerRecording = useCallback(() => {
+    recordingCancelRequestedRef.current = false;
+    setActiveInput('server');
+    void startRecording()
+      .then((handle) => {
+        if (recordingCancelRequestedRef.current) {
+          handle.cancel();
+          return;
+        }
+        recordingRef.current = handle;
+      })
+      .catch((error: unknown) => {
+        setLastError(mapRecordingError(error));
+        setState('error');
+      });
+  }, []);
 
   const start = useCallback(() => {
     if (!canListen || state === 'listening' || state === 'transcribing') return;
@@ -489,11 +540,14 @@ export function VoiceProvider({
     setInterim('');
     setTranscript('');
     setSuggestions([]);
+    setActiveInput(null);
+    fallbackAttemptedRef.current = false;
     // Never listen while speaking — the microphone would hear the synthesiser.
     silence();
     setState('listening');
 
     if (useBrowserRecognition) {
+      setActiveInput('browser');
       recognitionRef.current = startRecognition(locale, {
         onInterim: setInterim,
         onFinal: (text) => {
@@ -501,26 +555,31 @@ export function VoiceProvider({
           process(text);
         },
         onError: (error) => {
+          // Brave and privacy-restricted Chromium builds can expose the
+          // constructor but fail at runtime. One bounded fallback attempt keeps
+          // that failure from disabling MediaRecorder/server STT.
+          if (useServerStt && !fallbackAttemptedRef.current && error.kind !== 'permission-denied') {
+            fallbackAttemptedRef.current = true;
+            recognitionRef.current = null;
+            setLastError(null);
+            setState('listening');
+            startServerRecording();
+            return;
+          }
           setLastError(error);
           setState('error');
         },
         onEnd: () => {
           recognitionRef.current = null;
+          if (fallbackAttemptedRef.current) return;
         },
       });
       return;
     }
 
     // Server path: record a clip and upload it when the citizen stops.
-    void startRecording()
-      .then((handle) => {
-        recordingRef.current = handle;
-      })
-      .catch(() => {
-        setLastError({ kind: 'permission-denied', retryable: false });
-        setState('error');
-      });
-  }, [canListen, locale, process, silence, state, useBrowserRecognition]);
+    startServerRecording();
+  }, [canListen, locale, process, silence, startServerRecording, state, useBrowserRecognition, useServerStt]);
 
   const dictate = useCallback(
     (onText: (text: string) => void, options: DictateOptions = {}) => {
@@ -548,14 +607,24 @@ export function VoiceProvider({
         }
         void transcribeOnServer(clip);
       });
+      return;
     }
-  }, [transcribeOnServer]);
+    if (activeInput === 'server') {
+      recordingCancelRequestedRef.current = true;
+      setActiveInput(null);
+      setState('idle');
+    }
+  }, [activeInput, transcribeOnServer]);
 
   const cancel = useCallback(() => {
     recognitionRef.current?.abort();
     recognitionRef.current = null;
     recordingRef.current?.cancel();
     recordingRef.current = null;
+    recordingCancelRequestedRef.current = true;
+    transcribeAbortRef.current?.abort();
+    transcribeAbortRef.current = null;
+    setActiveInput(null);
     awaitingConfirmRef.current = false;
     dictationRef.current = null;
     dictateOptionsRef.current = {};
@@ -583,6 +652,7 @@ export function VoiceProvider({
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      setActiveInput('typed');
       process(trimmed);
     },
     [process],
@@ -621,7 +691,7 @@ export function VoiceProvider({
 
   const value = useMemo<VoiceContextValue>(
     () => ({
-      state, support, serverStt, serverTts, mode, canListen, unavailableReason,
+      state, support, serverStt, serverTts, mode, canListen, unavailableReason, activeInput,
       interim, transcript, lastError, pending, suggestions, speaking, canSpeak,
       start, dictate, stop, cancel, confirm, reject, submitText, explainUnavailable, speak, silence,
       registerActions, registerReadable,
@@ -630,7 +700,7 @@ export function VoiceProvider({
       hideHelp: () => setHelpVisible(false),
     }),
     [
-      state, support, serverStt, serverTts, mode, canListen, unavailableReason, interim, transcript,
+      state, support, serverStt, serverTts, mode, canListen, unavailableReason, activeInput, interim, transcript,
       lastError, pending, suggestions, speaking, canSpeak, start, dictate, stop, cancel,
       confirm, reject, submitText, explainUnavailable, speak, silence, registerActions,
       registerReadable, helpVisible,

@@ -22,6 +22,7 @@ export type RecognitionErrorKind =
   | 'no-speech'
   | 'no-microphone'
   | 'network'
+  | 'server-unavailable'
   | 'aborted'
   | 'unknown';
 
@@ -30,6 +31,8 @@ export interface RecognitionError {
   /** Whether pressing the button again could plausibly work. */
   readonly retryable: boolean;
 }
+
+export type MicrophonePermission = 'granted' | 'denied' | 'prompt' | 'unknown';
 
 /* ------------------------------------------------- capability detection */
 
@@ -68,6 +71,12 @@ function recognitionConstructor(): RecognitionConstructor | null {
 export interface VoiceSupport {
   /** Web Speech API present — free, instant, no upload. */
   readonly recognition: boolean;
+  /** Whether the browser exposes getUserMedia at all. */
+  readonly microphone: boolean;
+  /** Current permission state; this is intentionally separate from API support. */
+  readonly microphonePermission: MicrophonePermission;
+  /** Whether MediaRecorder can capture a clip for server STT. */
+  readonly mediaRecorder: boolean;
   /** MediaRecorder + getUserMedia, needed for the server transcription path. */
   readonly recording: boolean;
   readonly synthesis: boolean;
@@ -84,7 +93,10 @@ export interface VoiceSupport {
 
 export function detectVoiceSupport(): VoiceSupport {
   if (typeof window === 'undefined') {
-    return { recognition: false, recording: false, synthesis: false, banglaVoice: false, secureContext: false };
+    return {
+      recognition: false, microphone: false, microphonePermission: 'unknown', mediaRecorder: false,
+      recording: false, synthesis: false, banglaVoice: false, secureContext: false,
+    };
   }
 
   const secureContext = window.isSecureContext || window.location.hostname === 'localhost';
@@ -93,6 +105,9 @@ export function detectVoiceSupport(): VoiceSupport {
     // Microphone APIs require a secure context. Reporting them as available over
     // plain HTTP would produce a button that always fails.
     recognition: secureContext && recognitionConstructor() !== null,
+    microphone: secureContext && typeof navigator.mediaDevices?.getUserMedia === 'function',
+    microphonePermission: 'unknown',
+    mediaRecorder: secureContext && typeof window.MediaRecorder === 'function',
     recording:
       secureContext &&
       typeof navigator.mediaDevices?.getUserMedia === 'function' &&
@@ -101,6 +116,19 @@ export function detectVoiceSupport(): VoiceSupport {
     banglaVoice: hasBanglaVoice(),
     secureContext,
   };
+}
+
+/** Query permission without prompting. Browsers that do not expose the
+ * Permissions API remain `unknown`; the first real recording attempt is the
+ * only reliable way to distinguish prompt from a browser-specific restriction. */
+export async function queryMicrophonePermission(): Promise<MicrophonePermission> {
+  if (typeof navigator === 'undefined' || !navigator.permissions?.query) return 'unknown';
+  try {
+    const status = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+    return status.state;
+  } catch {
+    return 'unknown';
+  }
 }
 
 /** Voices load asynchronously in most browsers, so this can change after boot. */
@@ -244,6 +272,17 @@ export function startRecognition(
       }
     },
   };
+}
+
+export function mapRecordingError(error: unknown): RecognitionError {
+  const name = error instanceof DOMException ? error.name : '';
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return { kind: 'permission-denied', retryable: false };
+  }
+  if (name === 'NotFoundError' || name === 'NotReadableError' || name === 'AbortError') {
+    return { kind: 'no-microphone', retryable: name === 'AbortError' };
+  }
+  return { kind: 'unknown', retryable: true };
 }
 
 /* -------------------------------------------------------------- recording */

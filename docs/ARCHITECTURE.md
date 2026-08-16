@@ -132,7 +132,7 @@ cannot grant access for its remaining lifetime.
 
 ## 3. Data model
 
-31 tables. The full definitions are in [src/lib/db/schema.ts](../src/lib/db/schema.ts); this is the
+32 tables. The full definitions are in [src/lib/db/schema.ts](../src/lib/db/schema.ts); this is the
 map and the reasoning.
 
 | Group | Tables |
@@ -141,7 +141,7 @@ map and the reasoning.
 | Knowledge | `organizations`, `opportunities`, `eligibility_rules`, `required_documents`, `service_locations`, `life_event_catalog` |
 | Retrieval | `documents`, `document_chunks`, `knowledge_graph_edges` |
 | Conversation | `conversations`, `messages`, `ai_logs` |
-| Citizen journey | `saved_opportunities`, `saved_status_history`, `action_plans`, `action_plan_tasks`, `timeline_events`, `notifications` |
+| Citizen journey | `saved_opportunities`, `saved_status_history`, `action_plans`, `action_plan_tasks`, `timeline_events`, `notifications`, `push_subscriptions` |
 | Decisions | `eligibility_evaluations` |
 | Governance | `knowledge_reviews`, `feedback`, `audit_log` |
 | Operations | `search_queries`, `job_runs`, `analytics_daily`, `rate_limit_buckets` |

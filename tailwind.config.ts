@@ -206,8 +206,29 @@ const config: Config = {
       fontFamily: {
         // Latin listed first on purpose (BDS §4.1): Bangla families ship poor
         // digits, so Latin codepoints and ALL numerals must resolve to Inter.
-        body: ['var(--font-inter)', 'var(--font-bengali)', 'Hind Siliguri', 'Kalpurush', 'SolaimanLipi', 'sans-serif'],
-        bengali: ['var(--font-bengali)', 'Hind Siliguri', 'Kalpurush', 'SolaimanLipi', 'sans-serif'],
+        // The named Bengali fallbacks cover a cold/offline Next font build on
+        // Windows; generic/system fallbacks keep the CSS portable elsewhere.
+        body: [
+          'var(--font-inter)',
+          'var(--font-bengali)',
+          'Noto Sans Bengali',
+          'Nirmala UI',
+          'Kalpurush',
+          'Hind Siliguri',
+          'SolaimanLipi',
+          'system-ui',
+          'sans-serif',
+        ],
+        bengali: [
+          'var(--font-bengali)',
+          'Noto Sans Bengali',
+          'Nirmala UI',
+          'Kalpurush',
+          'Hind Siliguri',
+          'SolaimanLipi',
+          'system-ui',
+          'sans-serif',
+        ],
         mono: ['var(--font-mono)', 'ui-monospace', 'monospace'],
       },
 

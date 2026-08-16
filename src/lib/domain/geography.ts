@@ -146,11 +146,21 @@ export function districtLabel(code: string | null | undefined, locale: 'bn' | 'e
 export function matchDistrict(input: string): DistrictRecord | undefined {
   const raw = input.trim().toLowerCase();
   if (!raw) return undefined;
-  const normalised = raw.replace(/[^a-zঀ-৿]/g, '');
+  // Speech and keyboard input commonly use ড়/ঢ়/য় while the canonical labels
+  // use ড়/ঢ়/য়. Normalize those equivalent spellings before matching, and
+  // accept a short Bengali locative suffix such as “কুড়িগ্রামে”.
+  const normaliseBangla = (value: string) => value
+    .normalize('NFC')
+    .replace(/ড়/g, 'ড়')
+    .replace(/ঢ়/g, 'ঢ়')
+    .replace(/য়/g, 'য়');
+  const normalised = normaliseBangla(raw).replace(/[^a-zঀ-৿]/g, '');
   if (!normalised) return undefined;
 
   for (const d of DISTRICTS) {
-    if (d.bn === input.trim()) return d;
+    const districtBn = normaliseBangla(d.bn);
+    const suffixLength = normalised.length - districtBn.length;
+    if (districtBn === normalised || (suffixLength >= 1 && suffixLength <= 2 && normalised.startsWith(districtBn))) return d;
     const en = d.en.toLowerCase().replace(/[^a-z]/g, '');
     if (en === normalised) return d;
     if (d.code.replace(/[^a-z]/g, '') === normalised) return d;
@@ -158,7 +168,7 @@ export function matchDistrict(input: string): DistrictRecord | undefined {
   // Partial containment, longest match first, so "coxsbazar" beats "cox".
   const candidates = DISTRICTS.filter((d) => {
     const en = d.en.toLowerCase().replace(/[^a-z]/g, '');
-    return (en.length >= 4 && normalised.includes(en)) || d.bn.includes(input.trim());
+    return (en.length >= 4 && normalised.includes(en)) || normaliseBangla(d.bn).includes(normalised);
   });
   return candidates.sort((a, b) => b.en.length - a.en.length)[0];
 }

@@ -238,6 +238,7 @@ export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 export const NOTIFICATION_TYPES = [
   'application_reminder',
   'deadline_reminder',
+  'timeline_reminder',
   'new_opportunity',
   'program_updated',
   'document_expiring',

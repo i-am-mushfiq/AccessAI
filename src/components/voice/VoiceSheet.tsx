@@ -27,7 +27,7 @@ export function VoiceSheet() {
   const {
     state, transcript, interim, lastError, pending, suggestions,
     confirm, reject, cancel, submitText, start, canSpeak, speak,
-    helpVisible, hideHelp,
+    helpVisible, hideHelp, activeInput,
   } = useVoice();
 
   const [correction, setCorrection] = useState('');
@@ -60,6 +60,7 @@ export function VoiceSheet() {
     : lastError?.kind === 'no-microphone' ? t('noMicrophone')
     : lastError?.kind === 'no-speech' ? t('heardNothing')
     : lastError?.kind === 'network' ? t('networkError')
+    : lastError?.kind === 'server-unavailable' ? t('serverSttUnavailable')
     : lastError?.kind === 'not-supported' ? t('unsupported')
     : t('genericError');
 
@@ -90,6 +91,12 @@ export function VoiceSheet() {
           <p className="type-body-lg min-h-8 text-center text-text-primary" aria-live="polite">
             {interim || (listening ? '' : transcript)}
           </p>
+
+          {activeInput === 'server' ? (
+            <p className="type-caption max-w-sm text-center text-text-secondary">
+              {t('serverAudioNotice')}
+            </p>
+          ) : null}
 
           {listening ? (
             <Button variant="secondary" onClick={cancel} fullWidth={false}>
@@ -258,6 +265,11 @@ function UnavailableSheet() {
   const reasonKey =
     unavailableReason === 'disabled' ? 'disabledInSettings'
     : unavailableReason === 'insecure' ? 'insecure'
+    : unavailableReason === 'permission-denied' ? 'permissionDenied'
+    : unavailableReason === 'no-microphone' ? 'noMicrophone'
+    : unavailableReason === 'server-unavailable' ? 'serverSttUnavailable'
+    : unavailableReason === 'browser-unavailable' ? 'browserRecognitionUnavailable'
+    : unavailableReason === 'media-recorder-unavailable' ? 'mediaRecorderUnavailable'
     : 'unsupported';
 
   const capability = (label: string, ok: boolean) => (
@@ -268,6 +280,14 @@ function UnavailableSheet() {
       </span>
     </li>
   );
+
+  const permissionLabel = support.microphonePermission === 'granted'
+    ? t('permissionGranted')
+    : support.microphonePermission === 'denied'
+      ? t('permissionDeniedShort')
+      : support.microphonePermission === 'prompt'
+        ? t('permissionPrompt')
+        : t('permissionUnknown');
 
   return (
     <Sheet
@@ -313,8 +333,14 @@ function UnavailableSheet() {
           </summary>
           <ul className="mt-2 flex flex-col gap-1">
             {capability(t('capRecognition'), support.recognition)}
-            {capability(t('capRecording'), support.recording)}
+            {capability(t('capMicrophoneApi'), support.microphone)}
+            <li className="flex items-center justify-between gap-3">
+              <span className="type-body-md text-text-secondary">{t('capMicrophonePermission')}</span>
+              <span className="type-label-md text-text-secondary">{permissionLabel}</span>
+            </li>
+            {capability(t('capMediaRecorder'), support.mediaRecorder)}
             {capability(t('capServerStt'), serverStt === true)}
+            {capability(t('capTypedFallback'), true)}
             {capability(t('capSynthesis'), support.synthesis)}
             {capability(t('capBanglaVoice'), support.banglaVoice)}
             {capability(t('capSecure'), support.secureContext)}

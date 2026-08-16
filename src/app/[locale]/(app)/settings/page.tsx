@@ -39,6 +39,8 @@ export default async function SettingsPage({ params }: { params: Promise<{ local
         // configured — an enabled switch that silently does nothing would be a lie.
         smsAvailable={Boolean(env.SMS_PROVIDER && env.SMS_API_KEY)}
         emailAvailable={Boolean(env.SMTP_HOST)}
+        pushConfigured={Boolean(env.WEB_PUSH_PUBLIC_KEY && env.WEB_PUSH_PRIVATE_KEY)}
+        pushPublicKey={env.WEB_PUSH_PUBLIC_KEY ?? null}
         sessions={sessions.map((s) => ({
           id: s.id,
           userAgent: s.userAgent,
