@@ -3,22 +3,30 @@
 import { useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { useMutation } from '@tanstack/react-query';
+import { Check, Mic, Pencil, X } from 'lucide-react';
 import { useRouter } from '@/i18n/navigation';
 import { api, ApiError } from '@/lib/api/client';
 import { Card, Section } from '@/components/primitives/Card';
 import { TextField } from '@/components/primitives/TextField';
 import { Select } from '@/components/primitives/Select';
 import { RadioGroup, SwitchRow, CheckboxRow } from '@/components/primitives/Choice';
-import { ChipPicker } from '@/components/primitives/Textarea';
+import { ChipPicker, Textarea } from '@/components/primitives/Textarea';
 import { DateOfBirthField, type DateOfBirthValue, EMPTY_DOB, toDate } from '@/components/primitives/DateOfBirthField';
 import { Button } from '@/components/primitives/Button';
 import { InfoPanel, Banner } from '@/components/primitives/Banner';
 import { ConfidenceMeter } from '@/components/primitives/Chip';
 import { useToast } from '@/components/providers/ToastProvider';
+import { useVoice } from '@/components/providers/VoiceProvider';
 import { DISTRICTS } from '@/lib/domain/geography';
 import {
   GENDERS, MARITAL_STATUSES, EDUCATION_LEVELS, OCCUPATIONS, DISABILITY_TYPES,
 } from '@/lib/domain/enums';
+import {
+  extractProfileCandidates,
+  type ProfileExtractionField,
+  type ProfileFieldCandidate,
+  type ProfileExtractionValue,
+} from '@/modules/profile/extraction';
 
 /**
  * The dynamic profile form — PRD §Feature 17, §68, and §21.
@@ -52,8 +60,10 @@ interface ProfileState {
   landOwnershipDecimals: string;
   isStudent: boolean | undefined;
   hasBusiness: boolean | undefined;
+  hasFarmingActivity: boolean | undefined;
   farmSizeDecimals: string;
   crops: string[];
+  livestock: string[];
   isPregnant: boolean | undefined;
   medicalConditions: string[];
   shareHealthData: boolean;
@@ -63,7 +73,10 @@ interface ProfileState {
 }
 
 const CROP_OPTIONS = ['rice', 'jute', 'wheat', 'maize', 'potato', 'mustard', 'pulses', 'vegetables', 'sugarcane', 'tea'] as const;
+const LIVESTOCK_OPTIONS = ['cattle', 'goat', 'poultry', 'duck', 'fish', 'sheep'] as const;
 const CONDITION_OPTIONS = ['cancer', 'kidney_failure', 'liver_cirrhosis', 'stroke_paralysis', 'thalassaemia', 'congenital_heart'] as const;
+
+type ReviewCandidate = ProfileFieldCandidate & { readonly editing: boolean };
 
 const CROP_LABELS: Record<string, { bn: string; en: string }> = {
   rice: { bn: 'ধান', en: 'Rice' }, jute: { bn: 'পাট', en: 'Jute' }, wheat: { bn: 'গম', en: 'Wheat' },
@@ -71,6 +84,20 @@ const CROP_LABELS: Record<string, { bn: string; en: string }> = {
   pulses: { bn: 'ডাল', en: 'Pulses' }, vegetables: { bn: 'সবজি', en: 'Vegetables' },
   sugarcane: { bn: 'আখ', en: 'Sugarcane' }, tea: { bn: 'চা', en: 'Tea' },
 };
+
+const LIVESTOCK_LABELS: Record<string, { bn: string; en: string }> = {
+  cattle: { bn: 'গরু', en: 'Cattle' }, goat: { bn: 'ছাগল', en: 'Goat' },
+  poultry: { bn: 'হাঁস-মুরগি', en: 'Poultry' }, duck: { bn: 'হাঁস', en: 'Duck' },
+  fish: { bn: 'মাছ', en: 'Fish' }, sheep: { bn: 'ভেড়া', en: 'Sheep' },
+};
+
+/** Suggests the likely answer without replacing an explicit citizen answer. */
+export function suggestFarmingActivity(
+  occupation: string | undefined,
+  current: boolean | undefined,
+): boolean | undefined {
+  return occupation === 'farmer' && current === undefined ? true : current;
+}
 
 const CONDITION_LABELS: Record<string, { bn: string; en: string }> = {
   cancer: { bn: 'ক্যান্সার', en: 'Cancer' },
@@ -121,6 +148,61 @@ const DISABILITY_LABELS: Record<string, { bn: string; en: string }> = {
   multiple: { bn: 'একাধিক', en: 'Multiple' }, other: { bn: 'অন্য', en: 'Other' },
 };
 
+/** Converts the server's canonical profile representation into form state. */
+function profileToFormState(
+  profile: Record<string, unknown> | null,
+  userDistrict: string | null,
+): ProfileState {
+  const get = <T,>(key: string, fallback: T): T => ((profile?.[key] as T) ?? fallback);
+  const str = (key: string) => {
+    const value = profile?.[key];
+    return value === null || value === undefined ? '' : String(value);
+  };
+
+  const rawDob = profile?.dateOfBirth as string | Date | null | undefined;
+  const initialDob: DateOfBirthValue = (() => {
+    if (!rawDob) return EMPTY_DOB;
+    const date = new Date(rawDob);
+    return Number.isNaN(date.getTime())
+      ? EMPTY_DOB
+      : { day: date.getDate(), month: date.getMonth(), year: date.getFullYear() };
+  })();
+  const initialGender = get<string | undefined>('gender', undefined);
+
+  return {
+    dob: initialDob,
+    gender: initialGender,
+    occupation: get<string | undefined>('occupation', undefined),
+    monthlyIncome: str('monthlyIncome'),
+    maritalStatus: get<string | undefined>('maritalStatus', undefined),
+    education: get<string | undefined>('education', undefined),
+    cgpa: str('cgpa'),
+    university: str('university'),
+    department: str('department'),
+    hasDisability: get<boolean | undefined>('hasDisability', undefined),
+    disabilityType: get<string | undefined>('disabilityType', undefined),
+    householdSize: str('householdSize'),
+    dependents: str('dependents'),
+    district: get<string | undefined>('district', userDistrict ?? undefined),
+    landOwnershipDecimals: str('landOwnershipDecimals'),
+    isStudent: get<boolean | undefined>('isStudent', undefined),
+    hasBusiness: get<boolean | undefined>('hasBusiness', undefined),
+    // A farmer occupation suggests farming, but does not answer the separate
+    // activity question on the citizen's behalf.
+    hasFarmingActivity: get<boolean | undefined>('hasFarmingActivity', undefined),
+    farmSizeDecimals: str('farmSizeDecimals'),
+    crops: get<string[]>('crops', []) ?? [],
+    livestock: get<string[]>('livestock', []) ?? [],
+    // A male profile cannot retain a pregnancy value in local form state.
+    isPregnant: initialGender === 'male' ? undefined : get<boolean | undefined>('isPregnant', undefined),
+    medicalConditions: get<string[]>('medicalConditions', []) ?? [],
+    shareHealthData: get<boolean>('shareHealthData', false),
+    hasNid: get<boolean | undefined>('hasNid', undefined),
+    hasBankAccount: get<boolean | undefined>('hasBankAccount', undefined),
+    isFreedomFighterFamily: get<boolean | undefined>('isFreedomFighterFamily', undefined),
+  };
+}
+
 export function ProfileForm({
   initialCompleteness,
   user,
@@ -136,55 +218,112 @@ export function ProfileForm({
   const locale = useLocale() as 'bn' | 'en';
   const toast = useToast();
   const router = useRouter();
-
-  const get = <T,>(key: string, fallback: T): T => ((profile?.[key] as T) ?? fallback);
-  const str = (key: string) => {
-    const value = profile?.[key];
-    return value === null || value === undefined ? '' : String(value);
-  };
-
-  const initialDob: DateOfBirthValue = (() => {
-    const raw = profile?.dateOfBirth as string | null | undefined;
-    if (!raw) return EMPTY_DOB;
-    const date = new Date(raw);
-    return { day: date.getDate(), month: date.getMonth(), year: date.getFullYear() };
-  })();
-
-  const [state, setState] = useState<ProfileState>({
-    dob: initialDob,
-    gender: get<string | undefined>('gender', undefined),
-    occupation: get<string | undefined>('occupation', undefined),
-    monthlyIncome: str('monthlyIncome'),
-    maritalStatus: get<string | undefined>('maritalStatus', undefined),
-    education: get<string | undefined>('education', undefined),
-    cgpa: str('cgpa'),
-    university: str('university'),
-    department: str('department'),
-    hasDisability: get<boolean | undefined>('hasDisability', undefined),
-    disabilityType: get<string | undefined>('disabilityType', undefined),
-    householdSize: str('householdSize'),
-    dependents: str('dependents'),
-    district: get<string | undefined>('district', user.district ?? undefined),
-    landOwnershipDecimals: str('landOwnershipDecimals'),
-    isStudent: get<boolean | undefined>('isStudent', undefined),
-    hasBusiness: get<boolean | undefined>('hasBusiness', undefined),
-    farmSizeDecimals: str('farmSizeDecimals'),
-    crops: get<string[]>('crops', []) ?? [],
-    isPregnant: get<boolean | undefined>('isPregnant', undefined),
-    medicalConditions: get<string[]>('medicalConditions', []) ?? [],
-    shareHealthData: get<boolean>('shareHealthData', false),
-    hasNid: get<boolean | undefined>('hasNid', undefined),
-    hasBankAccount: get<boolean | undefined>('hasBankAccount', undefined),
-    isFreedomFighterFamily: get<boolean | undefined>('isFreedomFighterFamily', undefined),
-  });
+  const { dictate, state: voiceState, canListen } = useVoice();
+  const [state, setState] = useState<ProfileState>(() => profileToFormState(profile, user.district));
 
   const [dirty, setDirty] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [completeness, setCompleteness] = useState(initialCompleteness);
+  const [extractionText, setExtractionText] = useState('');
+  const [reviewCandidates, setReviewCandidates] = useState<ReviewCandidate[]>([]);
+  const [unresolvedParts, setUnresolvedParts] = useState<string[]>([]);
 
   const update = <K extends keyof ProfileState>(key: K, value: ProfileState[K]) => {
     setState((current) => ({ ...current, [key]: value }));
     setDirty(true);
+  };
+
+  const extractionLabels: Record<ProfileExtractionField, string> = {
+    gender: t('extractionGender'),
+    district: t('extractionDistrict'),
+    occupation: t('extractionOccupation'),
+    monthlyIncome: t('extractionIncome'),
+    maritalStatus: t('extractionMaritalStatus'),
+    education: t('extractionEducation'),
+    cgpa: t('extractionCgpa'),
+    hasDisability: t('extractionDisability'),
+    householdSize: t('extractionHousehold'),
+    dependents: t('extractionDependents'),
+    landOwnershipDecimals: t('extractionLand'),
+    isStudent: t('extractionStudent'),
+    hasBusiness: t('extractionBusiness'),
+    hasFarmingActivity: t('extractionFarming'),
+    isPregnant: t('extractionPregnancy'),
+    medicalConditions: t('extractionHealth'),
+  };
+
+  const displayExtractionValue = (candidate: ProfileFieldCandidate): string => {
+    if (candidate.field === 'district') {
+      const district = DISTRICTS.find((item) => item.code === candidate.value);
+      return district ? (locale === 'bn' ? district.bn : district.en) : String(candidate.value);
+    }
+    if (typeof candidate.value === 'boolean') return candidate.value ? tc('yes') : tc('no');
+    if (Array.isArray(candidate.value)) return candidate.value.join(', ');
+    return String(candidate.value);
+  };
+
+  const analyzeProfileText = (text: string) => {
+    const result = extractProfileCandidates(text, { currentGender: state.gender });
+    setExtractionText(result.transcript);
+    setReviewCandidates(result.candidates.map((candidate) => ({ ...candidate, editing: false })));
+    setUnresolvedParts([...result.unresolvedParts]);
+  };
+
+  const updateReviewValue = (field: ProfileExtractionField, value: ProfileExtractionValue) => {
+    setReviewCandidates((current) => current.map((candidate) => (
+      candidate.field === field ? { ...candidate, value } : candidate
+    )));
+  };
+
+  const applyReviewedCandidate = (candidate: ReviewCandidate) => {
+    setState((current) => {
+      const next = { ...current };
+      switch (candidate.field) {
+        case 'gender':
+          next.gender = String(candidate.value);
+          if (next.gender === 'male') next.isPregnant = undefined;
+          break;
+        case 'district': next.district = String(candidate.value); break;
+        case 'occupation': next.occupation = String(candidate.value); break;
+        case 'monthlyIncome': next.monthlyIncome = String(candidate.value); break;
+        case 'maritalStatus': next.maritalStatus = String(candidate.value); break;
+        case 'education': next.education = String(candidate.value); break;
+        case 'cgpa': next.cgpa = String(candidate.value); break;
+        case 'hasDisability': next.hasDisability = Boolean(candidate.value); break;
+        case 'householdSize': next.householdSize = String(candidate.value); break;
+        case 'dependents': next.dependents = String(candidate.value); break;
+        case 'landOwnershipDecimals': next.landOwnershipDecimals = String(candidate.value); break;
+        case 'isStudent': next.isStudent = Boolean(candidate.value); break;
+        case 'hasBusiness': next.hasBusiness = Boolean(candidate.value); break;
+        case 'hasFarmingActivity':
+          next.hasFarmingActivity = Boolean(candidate.value);
+          if (!next.hasFarmingActivity) {
+            next.farmSizeDecimals = '';
+            next.crops = [];
+            next.livestock = [];
+          }
+          break;
+        case 'isPregnant':
+          if (next.gender !== 'male') next.isPregnant = Boolean(candidate.value);
+          break;
+        case 'medicalConditions':
+          next.medicalConditions = Array.from(candidate.value as readonly string[]);
+          break;
+      }
+      return next;
+    });
+    setDirty(true);
+    setReviewCandidates((current) => current.filter((item) => item.field !== candidate.field));
+  };
+
+  const removeReviewedCandidate = (field: ProfileExtractionField) => {
+    setReviewCandidates((current) => current.filter((candidate) => candidate.field !== field));
+  };
+
+  const toggleReviewEditing = (field: ProfileExtractionField) => {
+    setReviewCandidates((current) => current.map((candidate) => (
+      candidate.field === field ? { ...candidate, editing: !candidate.editing } : candidate
+    )));
   };
 
   const numberOrNull = (value: string): number | null => {
@@ -197,7 +336,11 @@ export function ProfileForm({
   const save = useMutation({
     mutationFn: () => {
       const dobDate = toDate(state.dob);
-      return api.patch<{ completeness: number }>('/users/profile', {
+      return api.patch<{
+        completeness: number;
+        /** The API returns the complete database-normalized profile. */
+        profile: Record<string, unknown>;
+      }>('/users/profile', {
         dateOfBirth: dobDate ? dobDate.toISOString() : null,
         gender: state.gender ?? null,
         occupation: state.occupation ?? null,
@@ -215,8 +358,17 @@ export function ProfileForm({
         landOwnershipDecimals: numberOrNull(state.landOwnershipDecimals),
         isStudent: state.isStudent ?? null,
         hasBusiness: state.hasBusiness ?? null,
-        farmSizeDecimals: numberOrNull(state.farmSizeDecimals),
-        crops: state.crops,
+        hasFarmingActivity: state.hasFarmingActivity ?? null,
+        // An unanswered farming question is a real partial-profile state. Do
+        // not erase legacy dependent data until the citizen explicitly says
+        // No; the server clears it for the false branch.
+        ...(state.hasFarmingActivity !== undefined
+          ? {
+              farmSizeDecimals: state.hasFarmingActivity ? numberOrNull(state.farmSizeDecimals) : null,
+              crops: state.hasFarmingActivity ? state.crops : null,
+              livestock: state.hasFarmingActivity ? state.livestock : null,
+            }
+          : {}),
         isPregnant: state.isPregnant ?? null,
         // Only sent when consent is on; the server also refuses it otherwise.
         medicalConditions: state.shareHealthData ? state.medicalConditions : null,
@@ -230,8 +382,15 @@ export function ProfileForm({
       setDirty(false);
       setFieldErrors({});
       setCompleteness(data.completeness);
-      toast.show({ tone: 'success', message: t('savedChanges') });
-      // Recommendations depend on the profile, so refresh what is cached.
+      // The PATCH response is authoritative. Rebuild every field from it so
+      // server coercion, defaults, and conditional normalization cannot leave
+      // stale local state behind while router.refresh preserves this client
+      // component instance.
+      setState(profileToFormState(data.profile, user.district));
+      toast.show({ tone: 'success', message: t('profileUpdated') });
+      // Profile and dashboard data are server-rendered in this app; there are
+      // no React Query read caches for them to invalidate. Refresh the current
+      // RSC tree so server consumers re-read the database before navigation.
       router.refresh();
     },
     onError: (error) => {
@@ -249,6 +408,85 @@ export function ProfileForm({
   ];
   const boolToChoice = (value: boolean | undefined) => (value === undefined ? undefined : value ? 'yes' : 'no');
 
+  const renderReviewEditor = (candidate: ReviewCandidate) => {
+    if (!candidate.editing) {
+      return <p className="type-body-lg text-text-primary">{displayExtractionValue(candidate)}</p>;
+    }
+
+    if (candidate.field === 'district') {
+      return (
+        <Select
+          label={extractionLabels[candidate.field]}
+          placeholder={tc('none')}
+          value={String(candidate.value)}
+          onChange={(value) => updateReviewValue(candidate.field, value)}
+          options={DISTRICTS.map((district) => ({
+            value: district.code,
+            label: locale === 'bn' ? district.bn : district.en,
+            keywords: [district.en, district.bn, district.code],
+          }))}
+          searchPlaceholder={tc('search')}
+        />
+      );
+    }
+
+    if (candidate.field === 'occupation') {
+      return (
+        <Select
+          label={extractionLabels[candidate.field]}
+          placeholder={tc('none')}
+          value={String(candidate.value)}
+          onChange={(value) => updateReviewValue(candidate.field, value)}
+          options={options(OCCUPATIONS, OCCUPATION_LABELS)}
+        />
+      );
+    }
+
+    if (candidate.field === 'gender') {
+      return (
+        <Select
+          label={extractionLabels[candidate.field]}
+          placeholder={tc('none')}
+          value={String(candidate.value)}
+          onChange={(value) => updateReviewValue(candidate.field, value)}
+          options={options(GENDERS, GENDER_LABELS)}
+        />
+      );
+    }
+
+    if (candidate.field === 'hasFarmingActivity' || candidate.field === 'isPregnant' || candidate.field === 'hasDisability' || candidate.field === 'isStudent' || candidate.field === 'hasBusiness') {
+      return (
+        <RadioGroup
+          name={`review-${candidate.field}`}
+          legend={extractionLabels[candidate.field]}
+          value={boolToChoice(Boolean(candidate.value))}
+          onChange={(value) => updateReviewValue(candidate.field, value === 'yes')}
+          options={yesNo}
+          columns={2}
+        />
+      );
+    }
+
+    const rawValue = Array.isArray(candidate.value) ? candidate.value.join(', ') : String(candidate.value);
+    return (
+      <TextField
+        label={extractionLabels[candidate.field]}
+        value={rawValue}
+        inputMode={typeof candidate.value === 'number' ? 'decimal' : undefined}
+        onChange={(event) => updateReviewValue(
+          candidate.field,
+          Array.isArray(candidate.value)
+            ? event.target.value.split(',').map((item) => item.trim()).filter(Boolean)
+            : typeof candidate.value === 'number'
+              ? Number(event.target.value.replace(/[^d.]/g, ''))
+              : event.target.value,
+        )}
+      />
+    );
+  };
+
+  const listening = voiceState === 'listening' || voiceState === 'transcribing';
+
   return (
     <div className="flex flex-col gap-6">
       <Card padding="default">
@@ -264,6 +502,102 @@ export function ProfileForm({
           {t('unsavedWarning')}
         </Banner>
       ) : null}
+
+      {/* ---------------------------------------------- voice/text extraction */}
+      <Card padding="default" className="flex flex-col gap-4">
+        <div>
+          <p className="type-heading-sm text-text-primary">{t('voiceProfileTitle')}</p>
+          <p className="type-body-md mt-1 text-text-secondary">{t('voiceProfileBody')}</p>
+        </div>
+        <Button
+          variant="secondary"
+          fullWidth={false}
+          leadingIcon={<Mic size={20} className="icon" aria-hidden="true" />}
+          disabled={!canListen || listening}
+          onClick={() => dictate((text) => analyzeProfileText(text))}
+        >
+          {listening ? t('voiceProfileListening') : t('voiceProfileButton')}
+        </Button>
+        {!canListen ? <p className="type-caption text-text-secondary">{t('voiceProfileUnavailable')}</p> : null}
+        <Textarea
+          label={t('profileTextLabel')}
+          helper={t('profileTextHelper')}
+          value={extractionText}
+          onChange={(event) => setExtractionText(event.target.value)}
+          rows={2}
+        />
+        <Button
+          variant="tertiary"
+          fullWidth={false}
+          disabled={extractionText.trim().length === 0}
+          onClick={() => analyzeProfileText(extractionText)}
+        >
+          {t('analyzeProfileText')}
+        </Button>
+
+        {reviewCandidates.length > 0 || unresolvedParts.length > 0 ? (
+          <div className="flex flex-col gap-3 border-t border-stroke-subtle pt-4" aria-live="polite">
+            <div>
+              <p className="type-label-lg text-text-primary">{t('reviewTitle')}</p>
+              <p className="type-body-md mt-1 text-text-secondary">{t('reviewBody')}</p>
+            </div>
+            {reviewCandidates.map((candidate) => (
+              <div
+                key={candidate.field}
+                className="flex flex-col gap-3 rounded-md border border-stroke-subtle bg-surface-sunken p-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="type-label-md text-text-secondary">{extractionLabels[candidate.field]}</p>
+                    {candidate.sensitive ? <p className="type-caption mt-1 text-text-warning">{t('sensitiveReviewHint')}</p> : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="inline-flex min-h-10 items-center gap-2 rounded-md px-3 type-label-md text-text-brand focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
+                    onClick={() => toggleReviewEditing(candidate.field)}
+                  >
+                    <Pencil size={16} className="icon" aria-hidden="true" />
+                    {t('editExtracted')}
+                  </button>
+                </div>
+                {renderReviewEditor(candidate)}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="md"
+                    leadingIcon={<Check size={18} className="icon" aria-hidden="true" />}
+                    onClick={() => applyReviewedCandidate(candidate)}
+                  >
+                    {candidate.sensitive ? t('confirmSensitive') : t('acceptExtracted')}
+                  </Button>
+                  <Button
+                    size="md"
+                    variant="tertiary"
+                    leadingIcon={<X size={18} className="icon" aria-hidden="true" />}
+                    onClick={() => removeReviewedCandidate(candidate.field)}
+                  >
+                    {t('removeExtracted')}
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {unresolvedParts.length > 0 ? (
+              <Banner tone="warning" statusWord={t('unresolvedLabel')}>
+                <span>{unresolvedParts.join(' · ')}</span>
+              </Banner>
+            ) : null}
+            <Button
+              variant="tertiary"
+              fullWidth={false}
+              onClick={() => {
+                setReviewCandidates([]);
+                setUnresolvedParts([]);
+              }}
+            >
+              {t('cancelReview')}
+            </Button>
+          </div>
+        ) : null}
+      </Card>
 
       {/* ------------------------------------------------------ personal */}
       <Section title={t('sectionPersonal')}>
@@ -285,7 +619,10 @@ export function ProfileForm({
             legend={t('genderLabel')}
             optionalLabel={tc('optional')}
             value={state.gender}
-            onChange={(value) => update('gender', value)}
+            onChange={(value) => {
+              update('gender', value);
+              if (value === 'male') update('isPregnant', undefined);
+            }}
             options={options(GENDERS, GENDER_LABELS)}
           />
 
@@ -330,7 +667,14 @@ export function ProfileForm({
             optionalLabel={tc('optional')}
             placeholder={tc('none')}
             value={state.occupation}
-            onChange={(value) => update('occupation', value)}
+            onChange={(value) => {
+              update('occupation', value);
+              if (suggestFarmingActivity(value, state.hasFarmingActivity) !== state.hasFarmingActivity) {
+                // Suggest, but do not force, the answer. The citizen can still
+                // select “No” immediately afterwards.
+                update('hasFarmingActivity', suggestFarmingActivity(value, state.hasFarmingActivity));
+              }
+            }}
             options={options(OCCUPATIONS, OCCUPATION_LABELS)}
           />
 
@@ -438,15 +782,17 @@ export function ProfileForm({
             value={state.dependents}
             onChange={(e) => update('dependents', e.target.value.replace(/\D/g, ''))}
           />
-          <RadioGroup
-            name="isPregnant"
-            legend={t('pregnantLabel')}
-            optionalLabel={tc('optional')}
-            columns={2}
-            value={boolToChoice(state.isPregnant)}
-            onChange={(value) => update('isPregnant', value === 'yes')}
-            options={yesNo}
-          />
+          {state.gender !== 'male' ? (
+            <RadioGroup
+              name="isPregnant"
+              legend={t('pregnantLabel')}
+              optionalLabel={tc('optional')}
+              columns={2}
+              value={boolToChoice(state.isPregnant)}
+              onChange={(value) => update('isPregnant', value === 'yes')}
+              options={yesNo}
+            />
+          ) : null}
         </Card>
       </Section>
 
@@ -466,21 +812,52 @@ export function ProfileForm({
                 : 'Many programmes prioritise landless households or those with little land.'
             }
           />
-          <TextField
-            label={locale === 'bn' ? 'খামারের আয়তন (শতাংশ)' : 'Farm size (decimals)'}
+          <RadioGroup
+            name="hasFarmingActivity"
+            legend={t('farmingLabel')}
             optionalLabel={tc('optional')}
-            inputMode="decimal"
-            normaliseDigits
-            value={state.farmSizeDecimals}
-            onChange={(e) => update('farmSizeDecimals', e.target.value.replace(/[^\d.]/g, ''))}
+            helper={state.occupation === 'farmer' && state.hasFarmingActivity === undefined
+              ? t('farmingFarmerHint')
+              : undefined}
+            columns={2}
+            value={boolToChoice(state.hasFarmingActivity)}
+            onChange={(value) => {
+              const connected = value === 'yes';
+              update('hasFarmingActivity', connected);
+              if (!connected) {
+                update('farmSizeDecimals', '');
+                update('crops', []);
+                update('livestock', []);
+              }
+            }}
+            options={yesNo}
           />
-          <ChipPicker
-            label={t('cropsLabel')}
-            optionalLabel={tc('optional')}
-            options={CROP_OPTIONS.map((crop) => ({ value: crop, label: CROP_LABELS[crop]![locale] }))}
-            selected={state.crops}
-            onChange={(crops) => update('crops', crops)}
-          />
+          {state.hasFarmingActivity ? (
+            <>
+              <TextField
+                label={locale === 'bn' ? 'খামারের আয়তন (শতাংশ)' : 'Farm size (decimals)'}
+                optionalLabel={tc('optional')}
+                inputMode="decimal"
+                normaliseDigits
+                value={state.farmSizeDecimals}
+                onChange={(e) => update('farmSizeDecimals', e.target.value.replace(/[^\d.]/g, ''))}
+              />
+              <ChipPicker
+                label={t('cropsLabel')}
+                optionalLabel={tc('optional')}
+                options={CROP_OPTIONS.map((crop) => ({ value: crop, label: CROP_LABELS[crop]![locale] }))}
+                selected={state.crops}
+                onChange={(crops) => update('crops', crops)}
+              />
+              <ChipPicker
+                label={t('livestockLabel')}
+                optionalLabel={tc('optional')}
+                options={LIVESTOCK_OPTIONS.map((animal) => ({ value: animal, label: LIVESTOCK_LABELS[animal]![locale] }))}
+                selected={state.livestock}
+                onChange={(livestock) => update('livestock', livestock)}
+              />
+            </>
+          ) : null}
         </Card>
       </Section>
 

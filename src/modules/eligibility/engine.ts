@@ -39,6 +39,7 @@ export interface EligibilityProfile {
   landOwnershipDecimals?: number;
   isStudent?: boolean;
   hasBusiness?: boolean;
+  hasFarmingActivity?: boolean;
   businessType?: string;
   employees?: number;
   farmSizeDecimals?: number;
@@ -415,6 +416,7 @@ const FIELD_LABELS: Record<RuleField, LocalisedText> = {
   landOwnershipDecimals: { en: 'land ownership', bn: 'জমির পরিমাণ' },
   isStudent: { en: 'student status', bn: 'আপনি শিক্ষার্থী কি না' },
   hasBusiness: { en: 'business status', bn: 'ব্যবসা আছে কি না' },
+  hasFarmingActivity: { en: 'farming activity', bn: 'কৃষিকাজের সঙ্গে যুক্ততা' },
   businessType: { en: 'type of business', bn: 'ব্যবসার ধরন' },
   employees: { en: 'number of employees', bn: 'কর্মী সংখ্যা' },
   farmSizeDecimals: { en: 'farm size', bn: 'খামারের আয়তন' },

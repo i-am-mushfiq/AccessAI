@@ -283,7 +283,23 @@ Programmable Voice, or a local operator's IVR. Credentials as for SMS, plus a pu
 
 ---
 
-## 6. SMTP — email notifications
+## 6. Web Push — optional browser notifications
+
+Browser push is an additional delivery channel. It never replaces the durable in-app notification
+row, and a missing VAPID configuration or unsupported browser leaves the in-app channel usable.
+
+```bash
+WEB_PUSH_PUBLIC_KEY=""
+WEB_PUSH_PRIVATE_KEY=""
+WEB_PUSH_SUBJECT="mailto:admin@accessai.gov.bd"
+```
+
+Generate a key pair once with `npx web-push generate-vapid-keys`. The private key is server-only;
+only the public key is passed to the settings screen. Each signed-in browser endpoint is stored in
+`push_subscriptions`, scoped to its account, and expired endpoints are removed after a 404/410
+delivery response. Browser permission and HTTPS/localhost requirements are surfaced in the UI.
+
+## 7. SMTP — email notifications
 
 **Why:** PRD §Feature 13 lists email among the notification channels. Secondary here, since email is
 explicitly *not* the identity.
@@ -300,7 +316,7 @@ that does nothing. Same for the SMS toggle.
 
 ---
 
-## 7. Map tiles — Nearby Services
+## 8. Map tiles — Nearby Services
 
 **Why:** PRD §70 describes an interactive map.
 
@@ -323,7 +339,7 @@ better Bangladesh POI coverage. Either is a drop-in; neither is required.
 
 ---
 
-## 8. Object storage — not yet used
+## 9. Object storage — not yet used
 
 ```bash
 S3_BUCKET=""  S3_REGION=""  S3_ACCESS_KEY=""  S3_SECRET_KEY=""  S3_ENDPOINT=""
@@ -336,7 +352,7 @@ charge and is the better fit for a Bangladesh-served deployment.
 
 ---
 
-## 9. OCR — not built
+## 10. OCR — not built
 
 PRD §Feature 8 implies reading a National ID or a certificate photo. Not implemented. It would need
 Google Cloud Vision or Azure Document Intelligence for Bangla print, or Tesseract with `ben`
@@ -348,7 +364,7 @@ should not ship without a confirm-what-we-read step. That is a design decision, 
 
 ---
 
-## 10. Full environment variable reference
+## 11. Full environment variable reference
 
 Validated by Zod at boot in [src/lib/config/env.ts](../src/lib/config/env.ts); an invalid value
 **stops the process with a per-variable message** rather than failing mysteriously later.
@@ -397,12 +413,14 @@ A weak signing secret is a total-compromise defect, so it is an error rather tha
 
 ---
 
-## 11. Optional native dependency
+## 12. Optional native dependency
 
 `@node-rs/argon2` is an **optional** dependency. Present → Argon2id. Absent (common on Windows
 without prebuilt binaries) → scrypt at N=2^15. Both hashes are self-describing, so an installation
 can gain Argon2 later without invalidating credentials, and a host that *loses* the module fails
 closed rather than silently accepting a password it cannot verify.
 
-The first build also fetches the Inter and Noto Sans Bengali font files through `next/font`, so it
-needs network access **once**; after that the cache makes builds offline.
+The first build may fetch the Inter and Noto Sans Bengali font files through `next/font`. The
+application also declares explicit Bengali system-font fallbacks (Nirmala UI and Kalpurush), so a
+cold or offline build does not fall through to an unrelated Latin-only fallback. There is no
+runtime stylesheet import or external font origin.

@@ -319,4 +319,6 @@ exactly the unsupported claim §33 forbids. The other five factors carry their s
   but no capture UI or object-storage writer was built.
 - **Streaming chat responses** (PRD §92 Sprint 2) are not implemented; responses arrive whole. The
   waiting state escalates at 8 s to the reassurance line BDS §10.1.5 requires.
-- **PWA / push notifications** are not implemented. Notifications are persisted and shown in-app.
+- **Full offline PWA support** is not implemented. Browser Web Push is available when VAPID keys
+  are configured and the browser supports it; notifications are still persisted and shown in-app
+  as the source of truth when push is unavailable.

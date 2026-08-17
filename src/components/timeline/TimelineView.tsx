@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { ChevronLeft, ChevronRight, CalendarClock, CircleCheck, Bell, RefreshCw, GraduationCap } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
@@ -39,6 +39,7 @@ export interface TimelineEntry {
   readonly eventDate: string;
   readonly completed: boolean;
   readonly opportunitySlug: string | null;
+  readonly planId?: string | null;
 }
 
 const TYPE_ICONS: Record<string, typeof CalendarClock> = {
@@ -53,7 +54,13 @@ const TYPE_ICONS: Record<string, typeof CalendarClock> = {
   announcement: Bell,
 };
 
-export function TimelineView({ events }: { readonly events: readonly TimelineEntry[] }) {
+export function TimelineView({
+  events,
+  focusPlanId,
+}: {
+  readonly events: readonly TimelineEntry[];
+  readonly focusPlanId?: string | null;
+}) {
   const t = useTranslations('timeline');
   const tc = useTranslations('common');
   const tv = useTranslations('voice');
@@ -62,8 +69,32 @@ export function TimelineView({ events }: { readonly events: readonly TimelineEnt
 
   const [view, setView] = useState<'agenda' | 'month'>('agenda');
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
+  const [highlightedEventIds, setHighlightedEventIds] = useState<ReadonlySet<string>>(new Set());
 
   const today = startOfDay(new Date());
+
+  const focusedEventIds = useMemo(
+    () => new Set(events.filter((event) => focusPlanId && event.planId === focusPlanId).map((event) => event.id)),
+    [events, focusPlanId],
+  );
+
+  useEffect(() => {
+    if (!focusPlanId || focusedEventIds.size === 0) {
+      setHighlightedEventIds(new Set());
+      return;
+    }
+
+    setHighlightedEventIds(new Set(focusedEventIds));
+    const firstId = events.find((event) => focusedEventIds.has(event.id))?.id;
+    const firstElement = firstId ? document.getElementById(`timeline-event-${firstId}`) : null;
+    if (firstElement instanceof HTMLElement) {
+      firstElement.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      firstElement.focus({ preventScroll: true });
+    }
+
+    const timeout = window.setTimeout(() => setHighlightedEventIds(new Set()), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [events, focusPlanId, focusedEventIds]);
 
   // Memoised because the spoken summary depends on it; a fresh object every
   // render would rebuild that summary on every keystroke elsewhere on the page.
@@ -205,7 +236,7 @@ export function TimelineView({ events }: { readonly events: readonly TimelineEnt
                   <ul className="flex flex-col gap-2">
                     {dayEvents.map((event) => (
                       <li key={event.id}>
-                        <EventRow event={event} typeLabel={typeLabels[event.type] ?? event.type} />
+                        <EventRow event={event} typeLabel={typeLabels[event.type] ?? event.type} focused={highlightedEventIds.has(event.id)} />
                       </li>
                     ))}
                   </ul>
@@ -222,7 +253,7 @@ export function TimelineView({ events }: { readonly events: readonly TimelineEnt
               <ul className="flex flex-col gap-2">
                 {agenda.past.slice(0, 10).map((event) => (
                   <li key={event.id}>
-                    <EventRow event={event} typeLabel={typeLabels[event.type] ?? event.type} past />
+                    <EventRow event={event} typeLabel={typeLabels[event.type] ?? event.type} past focused={highlightedEventIds.has(event.id)} />
                   </li>
                 ))}
               </ul>
@@ -313,7 +344,7 @@ export function TimelineView({ events }: { readonly events: readonly TimelineEnt
               .flatMap(([, dayEvents]) => dayEvents)
               .map((event) => (
                 <li key={event.id}>
-                  <EventRow event={event} typeLabel={typeLabels[event.type] ?? event.type} />
+                  <EventRow event={event} typeLabel={typeLabels[event.type] ?? event.type} focused={highlightedEventIds.has(event.id)} />
                 </li>
               ))}
           </ul>
@@ -331,10 +362,12 @@ function EventRow({
   event,
   typeLabel,
   past = false,
+  focused = false,
 }: {
   readonly event: TimelineEntry;
   readonly typeLabel: string;
   readonly past?: boolean;
+  readonly focused?: boolean;
 }) {
   const locale = useLocale() as 'bn' | 'en';
   const { numerals } = usePreferences();
@@ -389,13 +422,20 @@ function EventRow({
     'flex min-h-16 w-full items-start gap-3 rounded-md border border-stroke-subtle bg-surface px-4 py-3 text-start shadow-elev-1',
     'focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2',
     event.opportunitySlug && 'hover:border-stroke-brand hover:bg-surface-brand-subtle',
+    focused && 'border-stroke-brand bg-surface-brand-subtle ring-2 ring-stroke-brand',
   );
 
+  const focusProps = {
+    id: `timeline-event-${event.id}`,
+    tabIndex: focused ? -1 : undefined,
+    'aria-current': focused ? ('location' as const) : undefined,
+  };
+
   return event.opportunitySlug ? (
-    <Link href={`/opportunities/${event.opportunitySlug}`} className={className}>
+    <Link {...focusProps} href={`/opportunities/${event.opportunitySlug}`} className={className}>
       {body}
     </Link>
   ) : (
-    <div className={className}>{body}</div>
+    <div {...focusProps} className={className}>{body}</div>
   );
 }

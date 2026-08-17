@@ -44,6 +44,7 @@ export const RULE_FIELDS = [
   'landOwnershipDecimals',
   'isStudent',
   'hasBusiness',
+  'hasFarmingActivity',
   'businessType',
   'employees',
   'farmSizeDecimals',

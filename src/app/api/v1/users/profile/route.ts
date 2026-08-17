@@ -6,6 +6,7 @@ import { ok, readJson, handle } from '@/lib/http/response';
 import { requireFullSession } from '@/lib/http/session';
 import { updateProfileSchema } from '@/lib/validation/schemas';
 import { toEligibilityProfile, profileCompleteness } from '@/modules/eligibility/profile-mapper';
+import { normalizeConditionalProfilePatch } from '@/modules/eligibility/profile-safety';
 import { getDistrict } from '@/lib/domain/geography';
 
 /**
@@ -46,10 +47,24 @@ export async function PATCH(request: NextRequest) {
       patch[key] = value;
     }
 
+    // The API accepts life-event codes, while the database keeps provenance
+    // and detection time. Explicit onboarding/profile choices are manual and
+    // replace the current list so stale selections cannot survive a save.
+    if (body.lifeEvents !== undefined) {
+      patch.lifeEvents = body.lifeEvents === null
+        ? null
+        : body.lifeEvents.map((event) => ({ event, detectedAt: Date.now(), source: 'manual' as const }));
+    }
+
     // Derive division from district so a rule written against either works.
     if (typeof body.district === 'string') {
       patch.division = getDistrict(body.district)?.division ?? null;
     }
+
+    Object.assign(
+      patch,
+      normalizeConditionalProfilePatch(patch, before?.gender, before?.hasFarmingActivity),
+    );
 
     // Withdrawing health consent deletes the data it covered.
     if (body.shareHealthData === false) {
@@ -74,6 +89,10 @@ export async function PATCH(request: NextRequest) {
         .values({ userId: guard.session.userId, ...patch })
         .returning();
     }
+
+    // A successful mutation must always carry the row that was actually
+    // written. This is the canonical source used to reconcile client state.
+    if (!updated) throw new Error('Profile update did not return a row.');
 
     await db.insert(auditLog).values({
       actorId: guard.session.userId,

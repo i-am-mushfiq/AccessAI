@@ -29,7 +29,12 @@ export async function POST(request: NextRequest) {
     if (!result) return fail(ERROR_CODES.NOT_FOUND, 'That programme could not be found.');
 
     return ok(
-      { plan: result.plan, tasks: result.tasks, created: result.created },
+      {
+        plan: result.plan,
+        tasks: result.tasks,
+        created: result.created,
+        timelineEventIds: result.timelineEventIds,
+      },
       { status: result.created ? 201 : 200 },
     );
   }, 'action-plans:post');

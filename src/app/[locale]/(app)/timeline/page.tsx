@@ -15,8 +15,15 @@ import { addDays } from '@/lib/format/dates';
  * than a single month: switching months is then instant and offline-tolerant,
  * which matters far more on a slow connection than a marginally smaller payload.
  */
-export default async function TimelinePage({ params }: { params: Promise<{ locale: string }> }) {
+export default async function TimelinePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ locale: string }>;
+  searchParams?: Promise<{ focus?: string }>;
+}) {
   const { locale } = await params;
+  const query = searchParams ? await searchParams : {};
   setRequestLocale(locale);
 
   const session = await getFullSession();
@@ -50,7 +57,7 @@ export default async function TimelinePage({ params }: { params: Promise<{ local
         />
       ) : (
         <TimelineView
-          events={events.map(({ event, opportunity }) => ({
+          events={events.map(({ event, opportunity, planId }) => ({
             id: event.id,
             type: event.type,
             title: event.title,
@@ -60,7 +67,9 @@ export default async function TimelinePage({ params }: { params: Promise<{ local
             eventDate: event.eventDate.toISOString(),
             completed: event.completed,
             opportunitySlug: opportunity?.slug ?? null,
+            planId,
           }))}
+          focusPlanId={query.focus?.trim() || null}
         />
       )}
     </div>

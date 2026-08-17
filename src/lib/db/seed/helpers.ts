@@ -228,13 +228,23 @@ export const isStudent = (weight = 2) =>
   );
 
 export const isFarmerLike = () =>
-  c(
-    'occupation',
-    'in',
-    ['farmer', 'fisherman', 'day_labourer'],
-    ['Your occupation is covered by this programme.', 'আপনার পেশা এই কর্মসূচির আওতাভুক্ত।'],
-    ['This programme is for farmers and agricultural workers.', 'এই কর্মসূচি কৃষক ও কৃষি শ্রমিকদের জন্য।'],
-    { unknown: ['What is your occupation?', 'আপনার পেশা কী?'] },
+  ANY(
+    c(
+      'occupation',
+      'in',
+      ['farmer', 'fisherman', 'day_labourer'],
+      ['Your occupation is covered by this programme.', 'আপনার পেশা এই কর্মসূচির আওতাভুক্ত।'],
+      ['This programme is for farmers and agricultural workers.', 'এই কর্মসূচি কৃষক ও কৃষি শ্রমিকদের জন্য।'],
+      { unknown: ['What is your occupation?', 'আপনার পেশা কী?'] },
+    ),
+    c(
+      'hasFarmingActivity',
+      'eq',
+      true,
+      ['You said you are connected to farming or agriculture.', 'আপনি কৃষি বা চাষাবাদের সঙ্গে যুক্ত বলেছেন।'],
+      ['This programme is for people connected to farming or agriculture.', 'এই কর্মসূচি কৃষি বা চাষাবাদের সঙ্গে যুক্ত মানুষের জন্য।'],
+      { unknown: ['Are you connected to farming or agriculture?', 'আপনি কি কৃষি বা চাষাবাদের সঙ্গে যুক্ত?'] },
+    ),
   );
 
 /* --------------------------------------------------------- seed records */

@@ -113,6 +113,9 @@ export const updateProfileSchema = z.object({
   landOwnershipDecimals: optionalNumber(0, 100_000, 'Enter your land in decimals.'),
   isStudent: z.boolean().nullish(),
   hasBusiness: z.boolean().nullish(),
+  hasFarmingActivity: z.boolean().nullish(),
+  /** Replaces the explicit profile-selected situation list. */
+  lifeEvents: z.array(z.enum(LIFE_EVENTS)).max(10).nullish(),
   businessType: z.string().trim().max(120).nullish(),
   employees: optionalNumber(0, 100_000, 'Enter the number of employees.'),
   farmSizeDecimals: optionalNumber(0, 100_000, 'Enter your farm size in decimals.'),
@@ -150,6 +153,19 @@ export const updateSettingsSchema = z.object({
   notifyNewOpportunities: z.boolean().optional(),
   notifyProgramUpdates: z.boolean().optional(),
   profileVisibility: z.enum(['private', 'anonymised_analytics']).optional(),
+});
+
+export const pushSubscriptionSchema = z.object({
+  endpoint: z.string().url().max(2048).refine((value) => new URL(value).protocol === 'https:', 'must use HTTPS'),
+  keys: z.object({
+    p256dh: z.string().min(16).max(512),
+    auth: z.string().min(8).max(256),
+  }),
+  userAgent: z.string().trim().max(500).nullish(),
+});
+
+export const deletePushSubscriptionSchema = z.object({
+  endpoint: z.string().url().max(2048).refine((value) => new URL(value).protocol === 'https:', 'must use HTTPS'),
 });
 
 /* ------------------------------------------------------------------ chat */

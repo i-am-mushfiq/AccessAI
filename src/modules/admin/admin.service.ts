@@ -8,7 +8,8 @@ import {
 import { backfillEmbeddings } from '@/modules/knowledge/retrieval';
 import { termFrequencies } from '@/modules/knowledge/tokenizer';
 import { addDays } from '@/lib/format/dates';
-import { describeAiMode } from '@/modules/ai/providers';
+import { describeAiMode, describeAiDiagnostics } from '@/modules/ai/providers';
+import { ProviderError, safeProviderFailure } from '@/modules/ai/providers/types';
 import { hasEmbeddingProvider } from '@/lib/config/env';
 import type { UserRole } from '@/lib/domain/enums';
 
@@ -245,7 +246,7 @@ export async function getSystemHealth() {
     .orderBy(desc(aiLogs.createdAt))
     .limit(10);
 
-  const ai = describeAiMode();
+  const ai = describeAiDiagnostics();
 
   return {
     database: { ok: databaseOk, latencyMs: databaseLatencyMs },
@@ -253,9 +254,15 @@ export async function getSystemHealth() {
       ...ai,
       // Stated plainly so an operator is never confused about why answers are
       // template-shaped.
-      note: ai.isLive
+      note: ai.status === 'simulated'
+        ? 'No live provider is configured. Deterministic eligibility, citations, and composer text remain active.'
+        : ai.status === 'configuration-error'
+          ? 'The selected provider is missing its API key. Deterministic fallback remains active.'
+          : ai.status === 'runtime-failure'
+            ? 'The provider recently failed. Deterministic fallback remains active.'
+            : ai.isLive
         ? 'A hosted model is configured and serving responses.'
-        : 'No API key is configured. Responses are produced by the deterministic composer and labelled "Simulated" in the UI.',
+        : 'Deterministic composer is active.',
     },
     retrieval: {
       chunks: Number(chunkStats?.total ?? 0),
@@ -291,7 +298,11 @@ async function runJob<T>(name: string, fn: () => Promise<{ processed: number; fa
       .set({
         status: 'failed',
         finishedAt: new Date(),
-        detail: { error: error instanceof Error ? error.message : String(error) },
+        detail: {
+          error: error instanceof ProviderError
+            ? safeProviderFailure(error).message
+            : 'Job failed. Check server logs without exposing provider response bodies.',
+        },
       })
       .where(eq(jobRuns.id, run!.id));
     throw error;
@@ -410,11 +421,12 @@ export async function detectStaleness() {
 /** Deadline reminders for every citizen who has saved something. */
 export async function sendScheduledNotifications() {
   return runJob('scheduled_notifications', async () => {
-    const { generateDeadlineReminders } = await import('@/modules/citizen/citizen.service');
+    const { generateDeadlineReminders, generateTimelineReminders } = await import('@/modules/citizen/citizen.service');
     const citizens = await db.select({ id: users.id }).from(users).where(eq(users.role, 'citizen'));
     let processed = 0;
     for (const citizen of citizens) {
       processed += await generateDeadlineReminders(citizen.id, 7);
+      processed += await generateTimelineReminders(citizen.id, 1);
     }
     return { processed, detail: { citizens: citizens.length } };
   });

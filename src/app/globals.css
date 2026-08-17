@@ -270,6 +270,26 @@
     font-variant-ligatures: common-ligatures contextual;
   }
 
+  /* Browser form controls do not consistently inherit the document font.
+     Keep labels, values and placeholders on the same shaping path in Chrome,
+     Chromium-based browsers and Firefox. */
+  button,
+  input,
+  select,
+  textarea,
+  optgroup,
+  option {
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  ::placeholder {
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+  }
+
   /* §4.2 rule 7 & 8 — no justification, no Bangla hyphenation. */
   p, li, dd, dt, td, th, h1, h2, h3, h4, h5, h6, span, div, label, button, a {
     text-wrap: pretty;
@@ -290,6 +310,13 @@
   :lang(bn) address {
     font-style: normal;
     font-weight: 600;
+  }
+
+  /* Do not manufacture slanted or heavy Bengali glyphs when a requested
+     weight is unavailable. Noto Sans Bengali supplies 400/500/600/700; the
+     system fallbacks choose their nearest real face instead. */
+  :lang(bn) {
+    font-synthesis: none;
   }
 
   /* Focus — §3.4. Never `outline: none`; the browser default ring fails on

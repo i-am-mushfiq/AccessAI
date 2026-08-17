@@ -16,6 +16,7 @@ import { DictateDigits } from '@/components/voice/DictateDigits';
 import { DISTRICTS } from '@/lib/domain/geography';
 import { detectOperator, formatPhone, maskPhone, normalisePhone } from '@/lib/format/numerals';
 import type { AppLocale } from '@/i18n/routing';
+import { destinationAfterAuth } from '@/modules/onboarding/routing';
 
 /**
  * The phone + OTP + PIN flow, covering sign-in, registration, and PIN reset.
@@ -129,7 +130,11 @@ export function AuthFlow({ mode, nextPath }: { readonly mode: AuthMode; readonly
     setFieldErrors({});
     try {
       await api.post('/auth/login', { phone, pin }, { retryOnUnauthenticated: false });
-      router.replace((nextPath as '/dashboard') ?? '/dashboard');
+      router.replace(
+        mode === 'register'
+          ? '/dashboard?welcome=1'
+          : ((nextPath as '/dashboard') ?? '/dashboard'),
+      );
     } catch (error) {
       handleError(error);
     } finally {
@@ -175,10 +180,11 @@ export function AuthFlow({ mode, nextPath }: { readonly mode: AuthMode; readonly
           { phone, code, name, pin, language: locale, district: district ?? null },
           { retryOnUnauthenticated: false },
         );
+        router.replace(destinationAfterAuth(mode) as '/onboarding');
       } else {
         await api.post('/auth/pin', { phone, code, pin }, { retryOnUnauthenticated: false });
+        router.replace(destinationAfterAuth(mode, nextPath) as '/dashboard');
       }
-      router.replace((nextPath as '/dashboard') ?? '/dashboard');
     } catch (error) {
       handleError(error);
       // A rejected code sends the citizen back one step rather than trapping

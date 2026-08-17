@@ -3,7 +3,7 @@ import type { Metadata, Viewport } from 'next';
 import { notFound } from 'next/navigation';
 import { NextIntlClientProvider, hasLocale } from 'next-intl';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
-import { Inter, Noto_Sans_Bengali, JetBrains_Mono } from 'next/font/google';
+import localFont from 'next/font/local';
 import { routing, LOCALE_TAGS, type AppLocale } from '@/i18n/routing';
 import { QueryProvider } from '@/components/providers/QueryProvider';
 import { PreferencesProvider } from '@/components/providers/PreferencesProvider';
@@ -14,9 +14,11 @@ import '../globals.css';
 /**
  * Fonts — BDS §4.1 and §4.7.
  *
- * Self-hosted and subset by `next/font`, so no external font origin is needed
- * (the CSP in next.config.ts blocks one anyway). Only weights 400 and 600 are in
- * the critical path, per §4.7's budget.
+ * Local assets are passed through `next/font/local`, so the production build
+ * and the browser never depend on Google Fonts being reachable. Bengali uses
+ * the official variable Noto Sans Bengali file with real 400–700 weights; the
+ * named system fallbacks remain useful if a font asset is unavailable at the
+ * edge.
  *
  * `adjustFontFallback` is left on so the metric-compensated fallback keeps the
  * swap under the 0.02 CLS budget §4.7 sets.
@@ -24,26 +26,32 @@ import '../globals.css';
  * NOTE: the first build fetches and caches these font files, so it needs
  * network access once. See docs/SETUP.md.
  */
-const inter = Inter({
-  subsets: ['latin'],
-  weight: ['400', '600', '700'],
+const inter = localFont({
+  src: '../../../public/fonts/InterVariable.woff2',
+  weight: '100 900',
+  style: 'normal',
   variable: '--font-inter',
+  fallback: ['Arial', 'sans-serif'],
   display: 'swap',
   preload: true,
 });
 
-const bengali = Noto_Sans_Bengali({
-  subsets: ['bengali'],
-  weight: ['400', '600', '700'],
+const bengali = localFont({
+  src: '../../../public/fonts/NotoSansBengali.ttf',
+  weight: '100 900',
+  style: 'normal',
   variable: '--font-bengali',
+  fallback: ['Nirmala UI', 'Kalpurush'],
   display: 'swap',
   preload: true,
 });
 
-const mono = JetBrains_Mono({
-  subsets: ['latin'],
-  weight: ['500'],
+const mono = localFont({
+  src: '../../../public/fonts/JetBrainsMono.woff2',
+  weight: '100 800',
+  style: 'normal',
   variable: '--font-mono',
+  fallback: ['ui-monospace', 'monospace'],
   display: 'swap',
   preload: false,
 });

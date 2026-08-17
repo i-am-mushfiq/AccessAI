@@ -106,7 +106,14 @@ export default async function AdminPage({ params }: { params: Promise<{ locale: 
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={health.ai.isLive ? 'success' : 'info'}>
               <Cpu size={18} className="icon" aria-hidden="true" />
-              {health.ai.mode} · {health.ai.model}
+              {health.ai.status === 'simulated'
+                ? (bn ? 'সিমুলেটেড এআই' : 'Simulated AI')
+                : health.ai.status === 'configuration-error'
+                  ? (bn ? 'প্রোভাইডার কনফিগারেশন সমস্যা' : 'Provider configuration error')
+                  : health.ai.status === 'runtime-failure'
+                    ? (bn ? 'প্রোভাইডার ব্যর্থ — fallback চালু' : 'Provider failed — fallback active')
+                    : `${health.ai.mode} configured`}
+              {' · '}{health.ai.model}
             </Badge>
             <Badge tone="neutral">{health.retrieval.mode}</Badge>
           </div>

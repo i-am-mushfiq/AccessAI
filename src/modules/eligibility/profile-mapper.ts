@@ -66,6 +66,7 @@ export function toEligibilityProfile(input: MapProfileInput): EligibilityProfile
   assign(base, 'landOwnershipDecimals', profile.landOwnershipDecimals);
   assign(base, 'isStudent', profile.isStudent);
   assign(base, 'hasBusiness', profile.hasBusiness);
+  assign(base, 'hasFarmingActivity', profile.hasFarmingActivity);
   assign(base, 'businessType', profile.businessType);
   assign(base, 'employees', profile.employees);
   assign(base, 'farmSizeDecimals', profile.farmSizeDecimals);
@@ -153,6 +154,7 @@ const COMPLETENESS_WEIGHTS: Partial<Record<RuleField, number>> = {
   cgpa: 3,
   university: 2,
   hasBusiness: 3,
+  hasFarmingActivity: 3,
   farmSizeDecimals: 2,
   hasBankAccount: 2,
   lifeEvents: 3,

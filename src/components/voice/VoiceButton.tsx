@@ -41,6 +41,11 @@ export function VoiceButton({ className }: { readonly className?: string }) {
   const reasonKey =
     unavailableReason === 'disabled' ? 'disabledInSettings'
     : unavailableReason === 'insecure' ? 'insecure'
+    : unavailableReason === 'permission-denied' ? 'permissionDenied'
+    : unavailableReason === 'no-microphone' ? 'noMicrophone'
+    : unavailableReason === 'server-unavailable' ? 'serverSttUnavailable'
+    : unavailableReason === 'browser-unavailable' ? 'browserRecognitionUnavailable'
+    : unavailableReason === 'media-recorder-unavailable' ? 'mediaRecorderUnavailable'
     : unavailableReason === 'unsupported' ? 'unsupported'
     : null;
 

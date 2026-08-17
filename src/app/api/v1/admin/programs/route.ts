@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
  * whose index has not will be retrieved for the old wording and cited with the
  * new — a subtle way to produce an answer that does not match its own source.
  */
-export async function indexOpportunity(opportunityId: string): Promise<number> {
+async function indexOpportunity(opportunityId: string): Promise<number> {
   const [row] = await db
     .select({ opportunity: opportunities, organizationName: organizations.name })
     .from(opportunities)

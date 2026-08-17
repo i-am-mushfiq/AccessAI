@@ -2,6 +2,7 @@
 import './load-env';
 import { env, resolveAiMode, aiConfigProblems } from '../src/lib/config/env';
 import { getProvider } from '../src/modules/ai/providers';
+import { safeProviderFailure } from '../src/modules/ai/providers/types';
 
 /**
  * Verifies the configured AI provider end to end, before you rely on it.
@@ -16,11 +17,6 @@ import { getProvider } from '../src/modules/ai/providers';
  * Run:  npm run ai:check
  */
 
-function mask(value: string | undefined): string {
-  if (!value) return '(not set)';
-  return value.length <= 10 ? '*'.repeat(value.length) : `${value.slice(0, 4)}…${value.slice(-4)}`;
-}
-
 async function listModels(baseUrl: string, key: string): Promise<string[] | null> {
   const url = `${baseUrl.replace(/\/+$/, '')}/models`;
   try {
@@ -31,8 +27,8 @@ async function listModels(baseUrl: string, key: string): Promise<string[] | null
     }
     const body = (await response.json()) as { data?: { id?: string }[] };
     return (body.data ?? []).map((m) => m.id ?? '').filter(Boolean);
-  } catch (error) {
-    console.log(`  model list: unreachable — ${error instanceof Error ? error.message : String(error)}`);
+  } catch {
+    console.log('  model list: unavailable — check network/provider configuration');
     return null;
   }
 }
@@ -58,13 +54,13 @@ async function main() {
   if (mode === 'deepseek') {
     console.log(`  base url            ${env.DEEPSEEK_BASE_URL}`);
     console.log(`  model               ${env.DEEPSEEK_MODEL}`);
-    console.log(`  api key             ${mask(env.DEEPSEEK_API_KEY)}`);
+    console.log(`  api key configured  ${env.DEEPSEEK_API_KEY ? 'yes' : 'no'}`);
     console.log(
       `  thinking            ${env.DEEPSEEK_THINKING}` +
         (env.DEEPSEEK_THINKING === 'disabled' ? '  (no chain of thought is requested or accepted)' : '  ← costs tokens this product discards'),
     );
     if (env.DEEPSEEK_REASONING_EFFORT) console.log(`  reasoning effort    ${env.DEEPSEEK_REASONING_EFFORT}`);
-    console.log(`  extra body          ${env.DEEPSEEK_EXTRA_BODY ?? '(none)'}`);
+    console.log(`  extra body configured ${env.DEEPSEEK_EXTRA_BODY ? 'yes' : 'no'}`);
     console.log('');
 
     const models = await listModels(env.DEEPSEEK_BASE_URL, env.DEEPSEEK_API_KEY ?? '');
@@ -83,9 +79,7 @@ async function main() {
     console.log('');
   } else {
     console.log(`  model               ${mode === 'anthropic' ? env.ANTHROPIC_MODEL : env.OPENAI_MODEL}`);
-    console.log(
-      `  api key             ${mask(mode === 'anthropic' ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY)}\n`,
-    );
+    console.log(`  api key configured  ${mode === 'anthropic' ? Boolean(env.ANTHROPIC_API_KEY) : Boolean(env.OPENAI_API_KEY)}\n`);
   }
 
   // ---- one real round trip -------------------------------------------------
@@ -111,8 +105,10 @@ async function main() {
     console.log('  Eligibility decisions, programmes, reasons and citations are unchanged —');
     console.log('  the model only rewrites the plan the deterministic layer already produced.\n');
   } catch (error) {
+    const failure = safeProviderFailure(error);
     console.error('');
-    console.error(`  ✗ request failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`  ✗ request failed: ${failure.message}`);
+    console.error(`    category          ${failure.code}`);
     console.error('');
     console.error('  Common causes:');
     console.error('    401 — the key is wrong, or has no credit');

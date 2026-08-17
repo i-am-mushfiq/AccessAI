@@ -67,7 +67,7 @@ test those flows without a phone.
 | Symptom | Cause and fix |
 |---|---|
 | `npm install` fails on `argon2` | Expected and harmless — it is an optional dependency. Auth falls back to scrypt (see [DEVIATIONS.md](docs/DEVIATIONS.md) §11). |
-| Build hangs on first run | `next/font` is fetching Inter / Noto Sans Bengali once. It needs network access **once**, then caches. |
+| Build hangs on first run | `next/font` may fetch Inter / Noto Sans Bengali once. If the font fetch is unavailable, AccessAI uses its explicit Bengali system-font fallbacks (Nirmala UI/Kalpurush) and continues without a runtime CSS import. |
 | `EADDRINUSE` on 3000 | Another dev server is already running. `npm run dev -- -p 3001`, or kill the old one. |
 | Sign-in says the account does not exist | The seed did not run. `npm run db:seed -- --reset-users`. |
 | Pages load but every list is empty | Schema without data. `npm run setup` again — the seed is idempotent. |
@@ -222,7 +222,7 @@ src/
     knowledge/                retrieval.ts (hybrid), tokenizer.ts (bn+en)
     opportunities/ recommendation/ citizen/ auth/ admin/
   lib/
-    db/schema.ts              31 tables
+    db/schema.ts              32 tables
     db/seed/                  the corpus + integrity validation
     domain/                   enums, geography (64 districts), rules (AST)
     format/                   numerals (Bangla, lakh/crore), dates

@@ -153,6 +153,11 @@ const schema = z.object({
   SMTP_PASSWORD: optionalStr,
   SMTP_FROM: nonEmpty.default('AccessAI <no-reply@accessai.local>'),
 
+  /** Web Push is optional; without both keys the app remains in-app only. */
+  WEB_PUSH_PUBLIC_KEY: optionalStr,
+  WEB_PUSH_PRIVATE_KEY: optionalStr,
+  WEB_PUSH_SUBJECT: nonEmpty.default('mailto:admin@accessai.local'),
+
   S3_BUCKET: optionalStr,
   S3_REGION: optionalStr,
   S3_ACCESS_KEY: optionalStr,
@@ -174,6 +179,13 @@ function load() {
       .map((i) => `  • ${i.path.join('.')}: ${i.message}`)
       .join('\n');
     throw new Error(`Invalid environment configuration:\n${detail}`);
+  }
+  const hasPublicKey = Boolean(parsed.data.WEB_PUSH_PUBLIC_KEY);
+  const hasPrivateKey = Boolean(parsed.data.WEB_PUSH_PRIVATE_KEY);
+  if (hasPublicKey !== hasPrivateKey) {
+    throw new Error(
+      'Invalid environment configuration: WEB_PUSH_PUBLIC_KEY and WEB_PUSH_PRIVATE_KEY must be set together, or both omitted.',
+    );
   }
   return parsed.data;
 }

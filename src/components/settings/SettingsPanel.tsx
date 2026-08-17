@@ -12,6 +12,7 @@ import { RadioGroup, SwitchRow } from '@/components/primitives/Choice';
 import { Dialog } from '@/components/primitives/Sheet';
 import { Banner, InfoPanel } from '@/components/primitives/Banner';
 import { LocaleSwitcher } from '@/components/layout/LocaleSwitcher';
+import { PushNotificationToggle } from '@/components/settings/PushNotificationToggle';
 import { usePreferences } from '@/components/providers/PreferencesProvider';
 import { useToast } from '@/components/providers/ToastProvider';
 import { formatDate } from '@/lib/format/dates';
@@ -32,6 +33,8 @@ export function SettingsPanel({
   settings,
   smsAvailable,
   emailAvailable,
+  pushConfigured,
+  pushPublicKey,
   sessions,
 }: {
   readonly settings: {
@@ -49,6 +52,8 @@ export function SettingsPanel({
   };
   readonly smsAvailable: boolean;
   readonly emailAvailable: boolean;
+  readonly pushConfigured: boolean;
+  readonly pushPublicKey: string | null;
   readonly sessions: readonly {
     id: string;
     userAgent: string | null;
@@ -200,6 +205,14 @@ export function SettingsPanel({
       {/* ------------------------------------------------- accessibility */}
       <Section title={t('accessibility')}>
         <Card padding="none" className="divide-y divide-stroke-subtle">
+          <PushNotificationToggle
+            checked={notify.notifyPush}
+            configured={pushConfigured}
+            publicKey={pushPublicKey}
+            onChange={(value) => setNotify((current) => ({ ...current, notifyPush: value }))}
+            onText={tc('on')}
+            offText={tc('off')}
+          />
           <SwitchRow
             checked={preferences.reduceMotion}
             onChange={(value) => {

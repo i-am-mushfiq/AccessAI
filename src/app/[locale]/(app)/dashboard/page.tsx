@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { desc, eq, and, gte, asc } from 'drizzle-orm';
 import {
   MessageCircle, GraduationCap, HeartPulse, HandHeart, Briefcase, MapPin, ArrowRight, CircleCheck,
+  Sparkles,
 } from 'lucide-react';
 import { db } from '@/lib/db/client';
 import { conversations, timelineEvents, opportunities, actionPlanTasks, actionPlans } from '@/lib/db/schema';
@@ -21,17 +22,25 @@ import { OpportunityListClient } from '@/components/opportunity/OpportunityListC
 import { formatDate, formatRelativeDay, startOfDay } from '@/lib/format/dates';
 import { AiEngineNotice } from '@/components/chat/AiEngineNotice';
 import { describeAiMode } from '@/modules/ai/providers';
+import { hasDashboardUrgency, recommendationState } from '@/modules/dashboard/presentation';
 
 /**
  * Dashboard — PRD §60.
  *
- * Widget order is by decision value, not by the PRD's listing order: what needs
- * action today comes first, then what the citizen can newly get, then their own
- * saved items. A dashboard whose first screenful is statistics wastes the one
- * moment a low-bandwidth user is definitely paying attention.
+ * Widget order is by decision value: personalised opportunities come before
+ * urgent work, profile improvement, navigation, and saved items. A dashboard
+ * whose first screenful is generic navigation wastes the one moment a
+ * low-bandwidth user is definitely paying attention.
  */
-export default async function DashboardPage({ params }: { params: Promise<{ locale: string }> }) {
+export default async function DashboardPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ locale: string }>;
+  searchParams?: Promise<{ welcome?: string }>;
+}) {
   const { locale } = await params;
+  const query = searchParams ? await searchParams : {};
   setRequestLocale(locale);
   const bn = locale === 'bn';
 
@@ -95,7 +104,14 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? t('greetingMorning') : hour < 17 ? t('greetingAfternoon') : t('greetingEvening');
-  const suggested = suggestNextFields(profile, 1)[0];
+  const suggestedFields = suggestNextFields(profile, 3);
+  const suggested = suggestedFields[0];
+  const suggestedFieldLabels = suggestedFields.map((field) => (bn ? fieldLabel(field).bn : fieldLabel(field).en));
+  const recommendationStatus = recommendationState(recommended.items.length, suggestedFieldLabels.length);
+  const recommendationEmptyDescription = recommendationStatus === 'improve_profile'
+    ? t('recommendedEmptyBody', { fields: suggestedFieldLabels.join(bn ? '، ' : ', ') })
+    : t('recommendedNoMatch');
+  const hasUrgency = hasDashboardUrgency(todayTasks.length, upcoming.length);
   const ai = describeAiMode();
 
   const quickActions: readonly {
@@ -120,6 +136,121 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
       </header>
 
       {!ai.isLive ? <AiEngineNotice mode={ai.mode} /> : null}
+
+      {query.welcome === '1' ? (
+        <Card padding="default" className="flex items-start gap-3 border-stroke-brand bg-surface-brand-subtle">
+          <Sparkles size={28} className="icon mt-0.5 shrink-0 text-ramp-green-600" aria-hidden="true" />
+          <span>
+            <span className="type-heading-sm block text-text-primary">{t('welcomeTitle')}</span>
+            <span className="type-body-md mt-1 block text-text-secondary">{t('welcomeBody')}</span>
+          </span>
+        </Card>
+      ) : null}
+
+      {/* -------------------------------------------- recommendations */}
+      <Section
+        title={t('recommendedTitle')}
+        action={
+          <Link href="/opportunities" className="type-label-lg text-text-link underline">
+            {tc('viewAll')}
+          </Link>
+        }
+      >
+        {recommended.items.length === 0 ? (
+          <EmptyState
+            title={t('recommendedEmpty')}
+            description={recommendationEmptyDescription}
+            action={
+              <div className="flex w-full flex-col gap-3 sm:flex-row">
+                <Link
+                  href="/profile"
+                  className="inline-flex min-h-14 flex-1 items-center justify-center gap-2 rounded-md bg-ramp-green-600 px-6 type-label-lg text-text-on-brand hover:bg-ramp-green-700 focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
+                >
+                  {suggested ? (bn ? `আপনার ${fieldLabel(suggested).bn} জানান` : `Tell us your ${fieldLabel(suggested).en}`) : t('completeProfile')}
+                  <ArrowRight size={20} className="icon" aria-hidden="true" />
+                </Link>
+                <Link
+                  href="/chat"
+                  className="inline-flex min-h-14 flex-1 items-center justify-center gap-2 rounded-md border-1.5 border-stroke px-6 type-label-lg text-text-brand hover:bg-surface-brand-subtle focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
+                >
+                  {t('startChat')}
+                </Link>
+              </div>
+            }
+          />
+        ) : (
+          <OpportunityListClient
+            initialItems={recommended.items.map((item) => ({
+              id: item.opportunity.id,
+              slug: item.opportunity.slug,
+              title: item.opportunity.title,
+              titleBn: item.opportunity.titleBn,
+              summary: item.opportunity.summary,
+              summaryBn: item.opportunity.summaryBn,
+              category: item.opportunity.category,
+              benefitAmount: item.opportunity.benefitAmount,
+              benefitPeriod: item.opportunity.benefitPeriod,
+              deadline: item.opportunity.deadline ? item.opportunity.deadline.toISOString() : null,
+              verificationStatus: item.opportunity.verificationStatus,
+              organization: { name: item.organization.name, nameBn: item.organization.nameBn },
+              eligibility: {
+                outcome: item.evaluation.outcome,
+                topReason: item.evaluation.matched[0]?.reason ?? null,
+                topBlocker: item.evaluation.failed[0]?.reason ?? null,
+                missingFields: item.evaluation.missingFields,
+              },
+              confidence: { score: item.confidence.score, band: item.confidence.band },
+              saved: item.saved,
+            }))}
+          />
+        )}
+      </Section>
+
+      {/* ------------------------------------------ urgent / time-sensitive */}
+      {hasUrgency ? (
+        <div className="flex flex-col gap-6">
+          {todayTasks.length > 0 ? (
+            <Section title={t('urgentTitle')} action={<Link href="/timeline" className="type-label-lg text-text-link underline">{tc('viewAll')}</Link>}>
+              <ul className="flex flex-col gap-2">
+                {todayTasks.map(({ task, planTitle, planTitleBn }) => (
+                  <li key={task.id}>
+                    <Card padding="compact" className="flex items-center gap-3">
+                      <CircleCheck size={24} className="icon shrink-0 text-ramp-neutral-400" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="type-body-lg block text-text-primary">{bn ? task.titleBn : task.title}</span>
+                        <span className="type-body-md block text-text-secondary clamp-2">{bn ? planTitleBn : planTitle}</span>
+                      </span>
+                      {task.dueDate ? <Badge tone="neutral">{formatRelativeDay(task.dueDate, locale as 'bn' | 'en')}</Badge> : null}
+                    </Card>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          ) : null}
+
+          {upcoming.length > 0 ? (
+            <Section title={t('upcomingTitle')} action={<Link href="/timeline" className="type-label-lg text-text-link underline">{tc('viewAll')}</Link>}>
+              <ul className="flex flex-col gap-2">
+                {upcoming.map(({ event, opportunitySlug }) => (
+                  <li key={event.id}>
+                    <Card padding="compact" className="flex items-center gap-3">
+                      <span className="min-w-0 flex-1">
+                        <span className="type-body-lg block text-text-primary">{bn ? event.titleBn : event.title}</span>
+                        <span className="type-body-md block tabular text-text-secondary">{formatDate(event.eventDate, locale as 'bn' | 'en')} · {formatRelativeDay(event.eventDate, locale as 'bn' | 'en')}</span>
+                      </span>
+                      {opportunitySlug ? (
+                        <Link href={`/opportunities/${opportunitySlug}`} aria-label={`${bn ? event.titleBn : event.title} — ${tc('viewDetails')}`} className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-pill text-text-secondary hover:bg-surface-sunken focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2">
+                          <ArrowRight size={20} className="icon" aria-hidden="true" />
+                        </Link>
+                      ) : null}
+                    </Card>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* --------------------------------------------- profile completeness */}
       {completeness < 80 ? (
@@ -170,124 +301,6 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             );
           })}
         </ul>
-      </Section>
-
-      {/* -------------------------------------------------- today's tasks */}
-      {todayTasks.length > 0 ? (
-        <Section title={t('tasksDueToday')} action={<Link href="/saved" className="type-label-lg text-text-link underline">{tc('viewAll')}</Link>}>
-          <ul className="flex flex-col gap-2">
-            {todayTasks.map(({ task, planTitle, planTitleBn }) => (
-              <li key={task.id}>
-                <Card padding="compact" className="flex items-center gap-3">
-                  <CircleCheck size={24} className="icon shrink-0 text-ramp-neutral-400" aria-hidden="true" />
-                  <span className="min-w-0 flex-1">
-                    <span className="type-body-lg block text-text-primary">
-                      {bn ? task.titleBn : task.title}
-                    </span>
-                    <span className="type-body-md block text-text-secondary clamp-2">
-                      {bn ? planTitleBn : planTitle}
-                    </span>
-                  </span>
-                  {task.dueDate ? (
-                    <Badge tone="neutral">{formatRelativeDay(task.dueDate, locale as 'bn' | 'en')}</Badge>
-                  ) : null}
-                </Card>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      ) : null}
-
-      {/* --------------------------------------------- upcoming deadlines */}
-      <Section
-        title={t('upcomingTitle')}
-        action={
-          <Link href="/timeline" className="type-label-lg text-text-link underline">
-            {tc('viewAll')}
-          </Link>
-        }
-      >
-        {upcoming.length === 0 ? (
-          <Card padding="default">
-            <p className="type-body-lg text-text-secondary">{t('upcomingEmpty')}</p>
-          </Card>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {upcoming.map(({ event, opportunitySlug }) => (
-              <li key={event.id}>
-                <Card padding="compact" className="flex items-center gap-3">
-                  <span className="min-w-0 flex-1">
-                    <span className="type-body-lg block text-text-primary">
-                      {bn ? event.titleBn : event.title}
-                    </span>
-                    <span className="type-body-md block tabular text-text-secondary">
-                      {formatDate(event.eventDate, locale as 'bn' | 'en')} ·{' '}
-                      {formatRelativeDay(event.eventDate, locale as 'bn' | 'en')}
-                    </span>
-                  </span>
-                  {opportunitySlug ? (
-                    <Link
-                      href={`/opportunities/${opportunitySlug}`}
-                      aria-label={`${bn ? event.titleBn : event.title} — ${tc('viewDetails')}`}
-                      className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-pill text-text-secondary hover:bg-surface-sunken focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
-                    >
-                      <ArrowRight size={20} className="icon" aria-hidden="true" />
-                    </Link>
-                  ) : null}
-                </Card>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
-
-      {/* ----------------------------------------------- recommendations */}
-      <Section
-        title={t('recommendedTitle')}
-        action={
-          <Link href="/opportunities" className="type-label-lg text-text-link underline">
-            {tc('viewAll')}
-          </Link>
-        }
-      >
-        {recommended.items.length === 0 ? (
-          <EmptyState
-            title={t('recommendedEmpty')}
-            action={
-              <Link
-                href="/chat"
-                className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-md bg-ramp-green-600 px-6 type-label-lg text-text-on-brand hover:bg-ramp-green-700"
-              >
-                {t('startChat')}
-              </Link>
-            }
-          />
-        ) : (
-          <OpportunityListClient
-            initialItems={recommended.items.map((item) => ({
-              id: item.opportunity.id,
-              slug: item.opportunity.slug,
-              title: item.opportunity.title,
-              titleBn: item.opportunity.titleBn,
-              summary: item.opportunity.summary,
-              summaryBn: item.opportunity.summaryBn,
-              category: item.opportunity.category,
-              benefitAmount: item.opportunity.benefitAmount,
-              benefitPeriod: item.opportunity.benefitPeriod,
-              deadline: item.opportunity.deadline ? item.opportunity.deadline.toISOString() : null,
-              verificationStatus: item.opportunity.verificationStatus,
-              organization: { name: item.organization.name, nameBn: item.organization.nameBn },
-              eligibility: {
-                outcome: item.evaluation.outcome,
-                topReason: item.evaluation.matched[0]?.reason ?? null,
-                topBlocker: item.evaluation.failed[0]?.reason ?? null,
-                missingFields: item.evaluation.missingFields,
-              },
-              confidence: { score: item.confidence.score, band: item.confidence.band },
-              saved: item.saved,
-            }))}
-          />
-        )}
       </Section>
 
       {/* ------------------------------------------------------- saved */}

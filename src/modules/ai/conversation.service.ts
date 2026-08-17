@@ -10,7 +10,8 @@ import { listOpportunities, recordEvaluation, type EnrichedOpportunity } from '@
 import { toEligibilityProfile } from '@/modules/eligibility/profile-mapper';
 import { fieldLabel, type EligibilityProfile } from '@/modules/eligibility/engine';
 import { composeResponse } from './composer';
-import { getProvider } from './providers';
+import { getProvider, recordProviderFailure } from './providers';
+import { safeProviderFailure } from './providers/types';
 import { PROMPTS } from '@/prompts';
 import { pickLocalised, type PlannedOpportunity, type ResponsePlan } from './response-plan';
 import type { Intent, LifeEvent } from '@/lib/domain/enums';
@@ -97,6 +98,7 @@ async function applyExtractedEntities(
   const [existing] = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
   const applied: string[] = [];
   const patch: Record<string, unknown> = {};
+  const effectiveGender = existing?.gender ?? extracted.gender;
 
   const setIfAbsent = (column: string, value: unknown, currentValue: unknown) => {
     if (value === undefined || value === null) return;
@@ -116,11 +118,17 @@ async function applyExtractedEntities(
     setIfAbsent('district', extracted.district, existing.district);
     setIfAbsent('division', extracted.division, existing.division);
     setIfAbsent('hasDisability', extracted.hasDisability, existing.hasDisability);
-    setIfAbsent('isPregnant', extracted.isPregnant, existing.isPregnant);
+    if (effectiveGender !== 'male') {
+      setIfAbsent('isPregnant', extracted.isPregnant, existing.isPregnant);
+    } else if (existing.isPregnant !== null && existing.isPregnant !== undefined) {
+      patch.isPregnant = null;
+      applied.push('isPregnant');
+    }
     setIfAbsent('householdSize', extracted.householdSize, existing.householdSize);
     setIfAbsent('landOwnershipDecimals', extracted.landOwnershipDecimals, existing.landOwnershipDecimals);
     setIfAbsent('isStudent', extracted.isStudent, existing.isStudent);
     setIfAbsent('hasBusiness', extracted.hasBusiness, existing.hasBusiness);
+    setIfAbsent('hasFarmingActivity', extracted.hasFarmingActivity, existing.hasFarmingActivity);
 
     // Medical conditions are only stored with explicit consent (PRD §68).
     if (extracted.medicalConditions && existing.shareHealthData) {
@@ -156,9 +164,9 @@ async function applyExtractedEntities(
     ['occupation', extracted.occupation], ['monthlyIncome', extracted.monthlyIncome],
     ['education', extracted.education], ['cgpa', extracted.cgpa], ['district', extracted.district],
     ['division', extracted.division], ['hasDisability', extracted.hasDisability],
-    ['isPregnant', extracted.isPregnant], ['householdSize', extracted.householdSize],
+    ['isPregnant', effectiveGender === 'male' ? undefined : extracted.isPregnant], ['householdSize', extracted.householdSize],
     ['landOwnershipDecimals', extracted.landOwnershipDecimals], ['isStudent', extracted.isStudent],
-    ['hasBusiness', extracted.hasBusiness],
+    ['hasBusiness', extracted.hasBusiness], ['hasFarmingActivity', extracted.hasFarmingActivity],
   ];
   for (const [key, value] of fields) {
     if (value !== undefined && value !== null) {
@@ -207,14 +215,19 @@ function toPlannedOpportunity(item: EnrichedOpportunity, locale: 'bn' | 'en'): P
  * programmes. Asking the highest-leverage question first is what keeps the
  * conversation short: one answer can resolve five programmes at once.
  */
-function chooseMissingField(items: readonly EnrichedOpportunity[]): RuleField | null {
+export function chooseMissingField(items: readonly EnrichedOpportunity[], profile: EligibilityProfile): RuleField | null {
   const counts = new Map<RuleField, number>();
   for (const item of items) {
     if (item.evaluation.outcome !== 'unknown') continue;
     for (const field of item.evaluation.missingFields) {
+      // Pregnancy is not a meaningful follow-up for a male profile. The
+      // profile API also strips any stale value, but filtering here prevents a
+      // generic clarification prompt from asking it before persistence runs.
+      if (field === 'isPregnant' && profile.gender === 'male') continue;
       counts.set(field, (counts.get(field) ?? 0) + 1);
     }
     for (const condition of item.evaluation.unknown) {
+      if (condition.field === 'isPregnant' && profile.gender === 'male') continue;
       counts.set(condition.field, (counts.get(condition.field) ?? 0) + 0.5);
     }
   }
@@ -302,7 +315,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     if (items.length === 0) {
       plan = { ...emptyPlan('no_results', locale, nlu), ungrounded: effective.length === 0 };
     } else {
-      const missingField = chooseMissingField(items);
+      const missingField = chooseMissingField(items, profile);
       const shortlist = items.slice(0, MAX_RECOMMENDATIONS);
 
       // Ask BEFORE recommending when the answer would change the verdicts —
@@ -366,7 +379,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       // A provider failure degrades to the deterministic composer rather than
       // failing the citizen's request. The UI shows the degraded badge.
       degraded = true;
-      engineError = error instanceof Error ? error.message : String(error);
+      recordProviderFailure(error);
+      engineError = safeProviderFailure(error).message;
       text = composeResponse(plan);
     }
   } else {

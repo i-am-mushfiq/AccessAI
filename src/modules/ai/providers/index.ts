@@ -1,5 +1,9 @@
 import { env, resolveAiMode, type AiMode } from '@/lib/config/env';
-import { postJson, ProviderError, type LlmProvider, type GenerateInput, type GenerateResult, type EmbedResult } from './types';
+import {
+  postJson, ProviderError, safeProviderFailure,
+  type LlmProvider, type GenerateInput, type GenerateResult, type EmbedResult,
+  type ProviderFailureCode,
+} from './types';
 
 /**
  * Provider resolution.
@@ -11,12 +15,17 @@ import { postJson, ProviderError, type LlmProvider, type GenerateInput, type Gen
 
 /* ----------------------------------------------------------- Anthropic */
 
+function requireApiKey(key: string | undefined): asserts key is string {
+  if (!key) throw new ProviderError('Provider API key is missing.', undefined, false, 'missing-api-key');
+}
+
 class AnthropicProvider implements LlmProvider {
   readonly engine = 'anthropic' as const;
   readonly model = env.ANTHROPIC_MODEL;
   readonly isLive = true;
 
   async generate(input: GenerateInput): Promise<GenerateResult> {
+    requireApiKey(env.ANTHROPIC_API_KEY);
     const started = Date.now();
     const payload = await postJson(
       'https://api.anthropic.com/v1/messages',
@@ -38,13 +47,16 @@ class AnthropicProvider implements LlmProvider {
       content?: { type: string; text?: string }[];
       usage?: { input_tokens?: number; output_tokens?: number };
     };
-    const text = (response.content ?? [])
+    if (!Array.isArray(response.content)) {
+      throw new ProviderError('Anthropic returned a malformed response.', undefined, false, 'malformed-response');
+    }
+    const text = response.content
       .filter((block) => block.type === 'text')
       .map((block) => block.text ?? '')
       .join('')
       .trim();
 
-    if (!text) throw new ProviderError('Anthropic returned no text content');
+    if (!text) throw new ProviderError('Anthropic returned no text content', undefined, false, 'malformed-response');
 
     return {
       text,
@@ -67,6 +79,7 @@ class OpenAiProvider implements LlmProvider {
   readonly isLive = true;
 
   async generate(input: GenerateInput): Promise<GenerateResult> {
+    requireApiKey(env.OPENAI_API_KEY);
     const started = Date.now();
     const payload = await postJson(
       'https://api.openai.com/v1/chat/completions',
@@ -87,8 +100,11 @@ class OpenAiProvider implements LlmProvider {
       choices?: { message?: { content?: string } }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
-    const text = (response.choices?.[0]?.message?.content ?? '').trim();
-    if (!text) throw new ProviderError('OpenAI returned no text content');
+    if (!Array.isArray(response.choices)) {
+      throw new ProviderError('OpenAI returned a malformed response.', undefined, false, 'malformed-response');
+    }
+    const text = (response.choices[0]?.message?.content ?? '').trim();
+    if (!text) throw new ProviderError('OpenAI returned no text content', undefined, false, 'malformed-response');
 
     return {
       text,
@@ -109,7 +125,10 @@ class OpenAiProvider implements LlmProvider {
       { timeoutMs: 60_000, retries: 1 },
     );
     const response = payload as { data?: { embedding: number[] }[] };
-    const vectors = (response.data ?? []).map((d) => d.embedding);
+    if (!Array.isArray(response.data)) {
+      throw new ProviderError('OpenAI returned a malformed embedding response.', undefined, false, 'malformed-response');
+    }
+    const vectors = response.data.map((d) => d.embedding);
     if (vectors.length === 0) return null;
     return { vectors, model: env.OPENAI_EMBEDDING_MODEL, engine: 'openai' };
   }
@@ -161,6 +180,7 @@ class DeepSeekProvider implements LlmProvider {
   }
 
   async generate(input: GenerateInput): Promise<GenerateResult> {
+    requireApiKey(env.DEEPSEEK_API_KEY);
     const started = Date.now();
     const payload = await postJson(
       `${env.DEEPSEEK_BASE_URL.replace(/\/+$/, '')}/chat/completions`,
@@ -198,7 +218,10 @@ class DeepSeekProvider implements LlmProvider {
       };
     };
 
-    const choice = response.choices?.[0];
+    if (!Array.isArray(response.choices)) {
+      throw new ProviderError('DeepSeek returned a malformed response.', undefined, false, 'malformed-response');
+    }
+    const choice = response.choices[0];
     const text = (choice?.message?.content ?? '').trim();
 
     const reasoningTokens = response.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
@@ -218,8 +241,11 @@ class DeepSeekProvider implements LlmProvider {
       // field, which would otherwise look like a provider outage. Say what it was.
       throw new ProviderError(
         hadTrace
-          ? `DeepSeek returned only a reasoning trace and no answer (finish_reason: ${choice?.finish_reason ?? 'unknown'}). Set DEEPSEEK_THINKING=disabled.`
+        ? `DeepSeek returned only a reasoning trace and no answer (finish_reason: ${choice?.finish_reason ?? 'unknown'}). Set DEEPSEEK_THINKING=disabled.`
           : 'DeepSeek returned no text content',
+        undefined,
+        false,
+        'malformed-response',
       );
     }
 
@@ -272,6 +298,7 @@ class SimulatedProvider implements LlmProvider {
 /* ------------------------------------------------------------ registry */
 
 let cached: LlmProvider | null = null;
+let lastFailure: { code: ProviderFailureCode; status?: number; at: string } | null = null;
 
 export function getProvider(): LlmProvider {
   if (cached) return cached;
@@ -287,11 +314,52 @@ export function getProvider(): LlmProvider {
 /** For tests: force a specific provider. */
 export function setProviderForTesting(provider: LlmProvider | null): void {
   cached = provider;
+  lastFailure = null;
 }
 
 export function describeAiMode(): { mode: AiMode; isLive: boolean; model: string } {
   const provider = getProvider();
   return { mode: provider.engine, isLive: provider.isLive, model: provider.model };
+}
+
+export interface AiDiagnostics {
+  readonly mode: AiMode;
+  readonly provider: AiMode;
+  readonly model: string;
+  readonly isLive: boolean;
+  readonly status: 'simulated' | 'configured' | 'configuration-error' | 'runtime-failure';
+  readonly failureCode?: ProviderFailureCode;
+  readonly failureStatus?: number;
+}
+
+/** Safe, non-invasive diagnostics. It never performs a provider request. */
+export function describeAiDiagnostics(): AiDiagnostics {
+  const mode = resolveAiMode();
+  const provider = getProvider();
+  const status = !provider.isLive
+    ? 'simulated'
+    : aiConfigHasMissingKey(mode)
+      ? 'configuration-error'
+      : lastFailure
+        ? 'runtime-failure'
+        : 'configured';
+  return {
+    mode,
+    provider: mode,
+    model: provider.model,
+    isLive: provider.isLive,
+    status,
+    ...(lastFailure ? { failureCode: lastFailure.code, ...(lastFailure.status ? { failureStatus: lastFailure.status } : {}) } : {}),
+  };
+}
+
+function aiConfigHasMissingKey(mode: AiMode): boolean {
+  return mode !== 'simulated' && !({ anthropic: env.ANTHROPIC_API_KEY, openai: env.OPENAI_API_KEY, deepseek: env.DEEPSEEK_API_KEY }[mode]);
+}
+
+export function recordProviderFailure(error: unknown): void {
+  const failure = safeProviderFailure(error);
+  lastFailure = { code: failure.code, ...(failure.status ? { status: failure.status } : {}), at: new Date().toISOString() };
 }
 
 export { ProviderError };
