@@ -3,7 +3,7 @@ import './load-env';
 import { db, initialisePragmas, sqlClient } from '../src/lib/db/client';
 import * as s from '../src/lib/db/schema';
 import {
-  SEED_ORGANIZATIONS, SEED_OPPORTUNITIES, SEED_LIFE_EVENTS, SEED_LOCATIONS,
+  SEED_ORGANIZATIONS, SEED_OPPORTUNITIES, SEED_LIFE_EVENTS, SEED_LOCATIONS, SEED_UNIONS,
   validateSeedCorpus, SEED_STATS,
 } from '../src/lib/db/seed';
 import { hashSecret } from '../src/lib/security/hash';
@@ -324,6 +324,45 @@ async function main() {
     await db.insert(s.serviceLocations).values(locationRows.slice(i, i + 200));
   }
 
+  // ------------------------------------------------- union boundaries
+  // Upserted by unionCode, never deleted: `issues.unionId` restricts deletion
+  // while a citizen's report references it, and a citizen's reports are
+  // exactly the kind of data a corpus refresh (`npm run db:seed` without
+  // --reset-users) must not discard.
+  console.log('  union boundaries…');
+  const unionIds = new Map<string, string>();
+  for (const u of SEED_UNIONS) {
+    const [row] = await db
+      .insert(s.unionBoundaries)
+      .values({
+        unionCode: u.unionCode,
+        name: u.name,
+        nameBn: u.nameBn,
+        division: u.division,
+        district: u.district,
+        upazila: u.upazila,
+        centroidLat: u.centroidLat,
+        centroidLng: u.centroidLng,
+        polygon: u.polygon,
+        verificationStatus: 'unverified_sample',
+      })
+      .onConflictDoUpdate({
+        target: s.unionBoundaries.unionCode,
+        set: {
+          name: u.name,
+          nameBn: u.nameBn,
+          division: u.division,
+          district: u.district,
+          upazila: u.upazila,
+          centroidLat: u.centroidLat,
+          centroidLng: u.centroidLng,
+          polygon: u.polygon,
+        },
+      })
+      .returning({ id: s.unionBoundaries.id });
+    unionIds.set(u.unionCode, row!.id);
+  }
+
   // ---------------------------------------------------- demo accounts
   const existingUsers = await db.select({ id: s.users.id }).from(s.users).limit(1);
   if (existingUsers.length === 0 || RESET_USERS) {
@@ -342,6 +381,14 @@ async function main() {
           landOwnershipDecimals: 8, hasNid: true, hasBankAccount: false, citizenship: 'bangladeshi',
           isStudent: false, hasDisability: false,
           lifeEvents: [{ event: 'widowhood', detectedAt: now.getTime(), source: 'profile' as const }],
+          // Pre-verified so the demo can show issue reporting/voting without
+          // first walking through Phase 1 — one account demonstrates the
+          // "already verified" state, the others still show the real flow.
+          nidVerificationStatus: 'simulated_verified' as const,
+          nidVerifiedAt: now,
+          residencyUnionId: unionIds.get('rangpur-sadar-kaligonj') ?? null,
+          residencyVerificationMethod: 'manual_attestation' as const,
+          residencyVerifiedAt: now,
         },
       },
       {
@@ -380,8 +427,10 @@ async function main() {
       },
     ];
 
+    let rahimaId: string | null = null;
     for (const d of demo) {
       const userId = crypto.randomUUID();
+      if (d.phone === '01712345678') rahimaId = userId;
       await db.insert(s.users).values({
         id: userId,
         phone: d.phone,
@@ -398,6 +447,54 @@ async function main() {
         await db.insert(s.userProfiles).values({ userId, ...d.profile, shareHealthData: false });
       }
     }
+
+    // A couple of sample reports so the union feed and the moderation queue
+    // are demonstrable immediately, without first walking through Phase 2.
+    const kaligonjId = unionIds.get('rangpur-sadar-kaligonj');
+    if (rahimaId && kaligonjId) {
+      console.log('  sample issue reports…');
+      const [verified] = await db
+        .insert(s.issues)
+        .values({
+          reporterId: rahimaId,
+          unionId: kaligonjId,
+          category: 'water_supply',
+          title: 'Tube well has been broken for two weeks',
+          description:
+            'The hand tube well near the primary school has stopped working. Families are walking to the next ward for drinking water.',
+          lat: 25.756,
+          lng: 89.286,
+          status: 'verified',
+          voteCount: 3,
+          moderatedBy: rahimaId,
+          moderationNote: 'Confirmed by ward member — sample record.',
+        })
+        .returning();
+      await db.insert(s.issueStatusHistory).values([
+        { issueId: verified!.id, fromStatus: null, toStatus: 'under_review', changedBy: rahimaId },
+        { issueId: verified!.id, fromStatus: 'under_review', toStatus: 'verified', changedBy: rahimaId, note: 'Sample record.' },
+      ]);
+
+      const [pending] = await db
+        .insert(s.issues)
+        .values({
+          reporterId: rahimaId,
+          unionId: kaligonjId,
+          category: 'road',
+          title: 'Flooded road blocks access to the market',
+          description: 'The main road to the union market floods after rain and becomes impassable for a day or two.',
+          lat: 25.754,
+          lng: 89.284,
+          status: 'under_review',
+        })
+        .returning();
+      await db.insert(s.issueStatusHistory).values({
+        issueId: pending!.id,
+        fromStatus: null,
+        toStatus: 'under_review',
+        changedBy: rahimaId,
+      });
+    }
   } else {
     console.log('  demo accounts already present (pass --reset-users to recreate)');
   }
@@ -407,8 +504,12 @@ async function main() {
   const [oppCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.opportunities);
   const [locCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.serviceLocations);
   const [edgeCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.knowledgeGraphEdges);
+  const [unionCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.unionBoundaries);
+  const [issueCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.issues);
 
   console.log('\nSeed complete:');
+  console.log(`  union boundaries    ${unionCount?.n ?? 0}`);
+  console.log(`  issue reports       ${issueCount?.n ?? 0}`);
   console.log(`  organisations       ${orgCount?.n ?? 0}`);
   console.log(`  programmes          ${oppCount?.n ?? 0}`);
   console.log(`  retrieval chunks    ${chunkCount}`);

@@ -6,10 +6,11 @@ import { SEED_LIVELIHOOD } from './opportunities-livelihood';
 import { SEED_SUPPORT } from './opportunities-support';
 import { SEED_LIFE_EVENTS } from './life-events';
 import { SEED_LOCATIONS } from './locations';
+import { SEED_UNIONS } from './unions';
 import { validateRuleSet } from '@/lib/domain/rules';
 import type { SeedOpportunity } from './helpers';
 
-export { SEED_ORGANIZATIONS, SEED_LIFE_EVENTS, SEED_LOCATIONS };
+export { SEED_ORGANIZATIONS, SEED_LIFE_EVENTS, SEED_LOCATIONS, SEED_UNIONS };
 export type { SeedOpportunity } from './helpers';
 
 export const SEED_OPPORTUNITIES: readonly SeedOpportunity[] = [
@@ -104,5 +105,6 @@ export const SEED_STATS = {
   opportunities: SEED_OPPORTUNITIES.length,
   locations: SEED_LOCATIONS.length,
   lifeEvents: SEED_LIFE_EVENTS.length,
+  unions: SEED_UNIONS.length,
   categories: new Set(SEED_OPPORTUNITIES.map((o) => o.category)).size,
 } as const;

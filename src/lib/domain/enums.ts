@@ -357,3 +357,66 @@ export type TextScale = (typeof TEXT_SCALES)[number];
 
 export const NUMERAL_SYSTEMS = ['latin', 'bengali'] as const;
 export type NumeralSystem = (typeof NUMERAL_SYSTEMS)[number];
+
+/* ------------------------------------------------------- civic: identity */
+// Phase 1 — verified identity & place. See docs/DEVIATIONS.md.
+
+/**
+ * `simulated_verified` is load-bearing, the same way `unverified_sample` is
+ * for the knowledge base: no live government NID API is wired into this
+ * build (see docs/EXTERNAL.md), so a format-valid number is labelled as
+ * simulated, never as `verified`. Only a real provider integration may ever
+ * write `verified`.
+ */
+export const NID_VERIFICATION_STATUSES = [
+  'unverified',
+  'simulated_verified',
+  'verified',
+  'rejected',
+] as const;
+export type NidVerificationStatus = (typeof NID_VERIFICATION_STATUSES)[number];
+
+/**
+ * How a citizen's union was confirmed. A GPS geofence is stronger evidence
+ * than a self-picked union from a list, and the two are shown differently —
+ * see `IdentityVerification.tsx`.
+ */
+export const RESIDENCY_VERIFICATION_METHODS = ['gps_geofence', 'manual_attestation'] as const;
+export type ResidencyVerificationMethod = (typeof RESIDENCY_VERIFICATION_METHODS)[number];
+
+/* --------------------------------------------------------- civic: issues */
+// Phase 2 — citizen voice ("Amar Union, Amar Sheba"). See docs/DEVIATIONS.md.
+
+export const ISSUE_CATEGORIES = [
+  'road',
+  'water_supply',
+  'electricity',
+  'sanitation',
+  'education_facility',
+  'health_facility',
+  'safety',
+  'corruption',
+  'environment',
+  'other',
+] as const;
+export type IssueCategory = (typeof ISSUE_CATEGORIES)[number];
+
+/**
+ * The state machine is fixed by the source spec: Submitted → UnderReview →
+ * (Verified | Rejected) → InProgress → Completed → Archived. `submitted` is
+ * kept as a distinct value for API/future-intake compatibility (e.g. an
+ * SMS/USSD channel queuing reports asynchronously — Phase 5) even though the
+ * current web flow moves a report straight to `under_review` on submission.
+ * Valid transitions are enforced in `modules/issues/state-machine.ts`, not
+ * just documented here.
+ */
+export const ISSUE_STATUSES = [
+  'submitted',
+  'under_review',
+  'verified',
+  'rejected',
+  'in_progress',
+  'completed',
+  'archived',
+] as const;
+export type IssueStatus = (typeof ISSUE_STATUSES)[number];

@@ -7,7 +7,8 @@ import {
   NOTIFICATION_TYPES, NOTIFICATION_CHANNELS, TIMELINE_EVENT_TYPES, DOCUMENT_SOURCE_TYPES,
   EMBEDDING_STATUSES, REVIEW_STATUSES, FEEDBACK_KINDS, FEEDBACK_STATUSES, AI_ENGINES,
   AI_REQUEST_TYPES, THEMES, NUMERAL_SYSTEMS, LIFE_EVENTS, INTENTS,
-  SERVICE_LOCATION_TYPES,
+  SERVICE_LOCATION_TYPES, NID_VERIFICATION_STATUSES, RESIDENCY_VERIFICATION_METHODS,
+  ISSUE_CATEGORIES, ISSUE_STATUSES,
 } from '../domain/enums';
 import type { RuleSet } from '../domain/rules';
 
@@ -98,6 +99,20 @@ export const userProfiles = sqliteTable(
     hasBankAccount: integer('has_bank_account', { mode: 'boolean' }),
     isFreedomFighterFamily: integer('is_freedom_fighter_family', { mode: 'boolean' }),
     interests: text('interests', { mode: 'json' }).$type<string[]>(),
+
+    /* ---- Phase 1: identity & residency verification (docs/DEVIATIONS.md) ---- */
+    /** SHA-256 of the NID number, never the number itself (KB §5, §7). */
+    nidNumberHash: text('nid_number_hash'),
+    nidVerificationStatus: text('nid_verification_status', { enum: NID_VERIFICATION_STATUSES })
+      .notNull().default('unverified'),
+    nidVerifiedAt: integer('nid_verified_at', { mode: 'timestamp_ms' }),
+    /** Set only once a GPS fix or manual pick has resolved a union boundary. */
+    residencyUnionId: text('residency_union_id').references(() => unionBoundaries.id, { onDelete: 'set null' }),
+    residencyVerificationMethod: text('residency_verification_method', { enum: RESIDENCY_VERIFICATION_METHODS }),
+    residencyVerifiedAt: integer('residency_verified_at', { mode: 'timestamp_ms' }),
+    /** The fix that produced the geofence match, kept for audit — not shown as a precise location. */
+    residencyLat: real('residency_lat'),
+    residencyLng: real('residency_lng'),
     /** Life events detected from conversation, with detection provenance. */
     lifeEvents: text('life_events', { mode: 'json' }).$type<
       { event: string; detectedAt: number; source: 'conversation' | 'profile' | 'manual' }[]
@@ -629,6 +644,113 @@ export const notifications = sqliteTable(
 );
 
 /* ======================================================================
+   CIVIC — SHEBAR JANALA PHASES 1–2
+   ====================================================================== */
+
+/**
+ * Union Parishad boundaries, for residency verification and issue scoping.
+ *
+ * Polygon geometry here is AUTHORED SAMPLE DATA — illustrative boundaries for
+ * a handful of unions, not surveyed ones (docs/DEVIATIONS.md). Reusing
+ * `VERIFICATION_STATUSES` is deliberate: the same reason the knowledge base
+ * marks a programme `unverified_sample` applies here — an invented boundary
+ * must never look like a surveyed one to a citizen deciding where they live.
+ */
+export const unionBoundaries = sqliteTable(
+  'union_boundaries',
+  {
+    id: id(),
+    unionCode: text('union_code').notNull(),
+    name: text('name').notNull(),
+    nameBn: text('name_bn').notNull(),
+    division: text('division').notNull(),
+    district: text('district').notNull(),
+    upazila: text('upazila').notNull(),
+    centroidLat: real('centroid_lat').notNull(),
+    centroidLng: real('centroid_lng').notNull(),
+    /** Closed ring of `[lat, lng]` points, at least 3, authored by hand. */
+    polygon: text('polygon', { mode: 'json' }).$type<[number, number][]>().notNull(),
+    verificationStatus: text('verification_status', { enum: VERIFICATION_STATUSES })
+      .notNull().default('unverified_sample'),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('union_code_uq').on(t.unionCode), index('union_district_idx').on(t.district)],
+);
+
+/**
+ * A citizen-reported local problem — the "Amar Union, Amar Sheba" module.
+ *
+ * `unionId` is resolved once, at submission time, from the reporter's own
+ * verified residency (never re-derived from the pinned lat/lng), so a report
+ * cannot be scoped to a union the citizen was never confirmed to live in.
+ */
+export const issues = sqliteTable(
+  'issues',
+  {
+    id: id(),
+    reporterId: text('reporter_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    unionId: text('union_id').notNull().references(() => unionBoundaries.id, { onDelete: 'restrict' }),
+    category: text('category', { enum: ISSUE_CATEGORIES }).notNull(),
+    title: text('title').notNull(),
+    description: text('description').notNull(),
+    lat: real('lat').notNull(),
+    lng: real('lng').notNull(),
+    /** Local path under `/uploads/issues/…` — see modules/issues/photo-storage.ts. */
+    photoUrl: text('photo_url'),
+    status: text('status', { enum: ISSUE_STATUSES }).notNull().default('under_review'),
+    /** Deterministic keyword-filter result — a signal for the queue, never a verdict (BRD BR-1). */
+    autoFlagged: integer('auto_flagged', { mode: 'boolean' }).notNull().default(false),
+    autoFlagReason: text('auto_flag_reason'),
+    moderatedBy: text('moderated_by'),
+    moderationNote: text('moderation_note'),
+    resolvedBy: text('resolved_by'),
+    resolutionNote: text('resolution_note'),
+    resolutionPhotoUrl: text('resolution_photo_url'),
+    voteCount: integer('vote_count').notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    resolvedAt: integer('resolved_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [
+    index('issues_union_status_idx').on(t.unionId, t.status),
+    index('issues_reporter_idx').on(t.reporterId),
+  ],
+);
+
+/** One endorsement per verified resident per issue (BRD FR-4). */
+export const issueVotes = sqliteTable(
+  'issue_votes',
+  {
+    id: id(),
+    issueId: text('issue_id').notNull().references(() => issues.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('issue_votes_uq').on(t.issueId, t.userId)],
+);
+
+/** Every status transition, auditable — the same pattern as `saved_status_history`. */
+export const issueStatusHistory = sqliteTable(
+  'issue_status_history',
+  {
+    id: id(),
+    issueId: text('issue_id').notNull().references(() => issues.id, { onDelete: 'cascade' }),
+    fromStatus: text('from_status', { enum: ISSUE_STATUSES }),
+    toStatus: text('to_status', { enum: ISSUE_STATUSES }).notNull(),
+    changedBy: text('changed_by'),
+    note: text('note'),
+    changedAt: createdAt(),
+  },
+  (t) => [index('issue_history_idx').on(t.issueId)],
+);
+
+export const issuesRelations = relations(issues, ({ one, many }) => ({
+  reporter: one(users, { fields: [issues.reporterId], references: [users.id] }),
+  union: one(unionBoundaries, { fields: [issues.unionId], references: [unionBoundaries.id] }),
+  votes: many(issueVotes),
+}));
+
+/* ======================================================================
    AI OPERATIONS & GOVERNANCE
    ====================================================================== */
 
@@ -899,5 +1021,11 @@ export type KnowledgeReview = typeof knowledgeReviews.$inferSelect;
 export type AuditLogRow = typeof auditLog.$inferSelect;
 export type JobRun = typeof jobRuns.$inferSelect;
 export type AnalyticsDaily = typeof analyticsDaily.$inferSelect;
+export type UnionBoundary = typeof unionBoundaries.$inferSelect;
+export type NewUnionBoundary = typeof unionBoundaries.$inferInsert;
+export type Issue = typeof issues.$inferSelect;
+export type NewIssue = typeof issues.$inferInsert;
+export type IssueVote = typeof issueVotes.$inferSelect;
+export type IssueStatusHistoryRow = typeof issueStatusHistory.$inferSelect;
 
 export { sql };

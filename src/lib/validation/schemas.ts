@@ -3,7 +3,7 @@ import {
   OPPORTUNITY_CATEGORIES, ELIGIBILITY_OUTCOMES, SAVED_STATUSES, TASK_STATUSES,
   GENDERS, MARITAL_STATUSES, EDUCATION_LEVELS, OCCUPATIONS, DISABILITY_TYPES,
   THEMES, NUMERAL_SYSTEMS, FEEDBACK_KINDS, LIFE_EVENTS, VERIFICATION_STATUSES,
-  OPPORTUNITY_STATUSES, ORGANIZATION_TYPES, USER_ROLES,
+  OPPORTUNITY_STATUSES, ORGANIZATION_TYPES, USER_ROLES, ISSUE_CATEGORIES, ISSUE_STATUSES,
 } from '@/lib/domain/enums';
 import { DISTRICT_CODES, DIVISIONS } from '@/lib/domain/geography';
 import { normalisePhone } from '@/lib/format/numerals';
@@ -332,6 +332,59 @@ export const verifyRecordSchema = z.object({
   entityId: z.string().uuid(),
   verificationStatus: z.enum(VERIFICATION_STATUSES),
   note: z.string().trim().max(1000).nullish(),
+});
+
+/* -------------------------------------------------------------- identity */
+// Phase 1 — verified identity & place.
+
+export const verifyNidSchema = z.object({
+  nidNumber: z
+    .string()
+    .trim()
+    .min(9, 'Enter your National ID number.')
+    .max(20, 'That does not look like a National ID number.'),
+});
+
+export const verifyResidencySchema = z
+  .object({
+    lat: z.coerce.number().min(-90).max(90).nullish(),
+    lng: z.coerce.number().min(-180).max(180).nullish(),
+    unionId: z.string().uuid().nullish(),
+  })
+  .refine((v) => (v.lat != null && v.lng != null) || Boolean(v.unionId), {
+    message: 'Share your location, or choose your union from the list.',
+  });
+
+/* ---------------------------------------------------------------- issues */
+// Phase 2 — citizen voice ("Amar Union, Amar Sheba").
+
+export const submitIssueSchema = z.object({
+  category: z.enum(ISSUE_CATEGORIES),
+  title: z.string().trim().min(4, 'Describe the problem in a few words.').max(160),
+  description: z
+    .string()
+    .trim()
+    .min(8, 'Add a little more detail so officials know what to check.')
+    .max(2000),
+  lat: z.coerce.number().min(-90).max(90),
+  lng: z.coerce.number().min(-180).max(180),
+  photoDataUrl: z
+    .string()
+    .regex(/^data:image\/(jpeg|png|webp);base64,/, 'Photos must be JPEG, PNG, or WebP.')
+    .max(7_000_000, 'That photo is too large — try a smaller one.')
+    .nullish(),
+});
+
+export const listIssuesQuerySchema = z.object({
+  sort: z.enum(['top', 'recent']).default('top'),
+  mine: z.coerce.boolean().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+export const updateIssueStatusSchema = z.object({
+  status: z.enum(ISSUE_STATUSES),
+  note: z.string().trim().max(1000).nullish(),
+  resolutionPhotoUrl: z.string().trim().max(300).nullish(),
 });
 
 /** Query-string parser that tolerates repeated keys becoming arrays. */

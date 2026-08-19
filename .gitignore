@@ -13,6 +13,10 @@ next-env.d.ts
 data/
 drizzle/meta/_journal.json.bak
 
+# Citizen-uploaded issue photos (Phase 2) — local filesystem storage, see
+# modules/issues/photo-storage.ts and docs/DEVIATIONS.md.
+public/uploads/
+
 # Secrets — never commit (PRD §87)
 .env
 .env.local

@@ -101,6 +101,16 @@ const schema = z.object({
   SMS_API_KEY: optionalStr,
   SMS_SENDER_ID: optionalStr,
 
+  /**
+   * National ID verification, OPTIONAL. Named the same way `SMS_PROVIDER` is:
+   * unset means every NID is format-checked and labelled `simulated_verified`
+   * (never `verified`), and naming a provider without an implementation fails
+   * loudly rather than silently pretending to check one — see
+   * modules/identity/nid.service.ts and docs/DEVIATIONS.md.
+   */
+  NID_PROVIDER: optionalStr,
+  NID_API_KEY: optionalStr,
+
   /* ------------------------------------------------------------- voice */
   /**
    * Speech-to-text, OPTIONAL. Without it, dictation uses the browser's Web
