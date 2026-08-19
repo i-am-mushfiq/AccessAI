@@ -390,4 +390,60 @@ exactly the unsupported claim §33 forbids. The other five factors carry their s
   but no capture UI or object-storage writer was built.
 - **Streaming chat responses** (PRD §92 Sprint 2) are not implemented; responses arrive whole. The
   waiting state escalates at 8 s to the reassurance line BDS §10.1.5 requires.
+
+## 16. Shebar Janala Phases 0–2: identity, residency, and issue reporting
+
+Not a deviation from AccessAI's own PRD — none of this is in it. A separate, older civic-transparency
+specification ("Shebar Janala," a Union Parishad issue-reporting and budget-transparency platform)
+was audited against this codebase and found to share no code with it. This section is Phase 0 of
+that audit's own roadmap ("stop any external claim that AccessAI already carries forward Shebar
+Janala's capabilities") and the honest record of Phases 1–2, built the same way everything else in
+this file is: real where it says real, simulated where it says simulated.
+
+**Phase 0 — the record.** Nothing in this codebase, before this change, implemented NID/KYC
+verification, a blockchain or hash-chain ledger, corruption-flagging, or citizen issue-reporting.
+Anything describing AccessAI as having those capabilities was describing a different product. This
+paragraph is that correction, kept in-repo rather than only in an external audit document.
+
+**Phase 1 — verified identity & place.**
+- **NID verification is simulated**, the same pattern as `SMS_PROVIDER`: `NID_PROVIDER` unset means a
+  National ID number is format-checked (10, 13, or 17 digits) and hashed
+  (`modules/identity/nid.service.ts`), and the result is labelled `simulated_verified` — never
+  `verified`. Naming a provider without an implementation throws rather than pretending to check one.
+- **Union/ward geofencing is a real point-in-polygon test** (`modules/identity/geofence.ts`) against
+  an authored sample corpus of four union boundaries (`lib/db/seed/unions.ts`) — hand-drawn ~1 km
+  squares around real district towns, not surveyed geometry. `unionBoundaries.verificationStatus`
+  reuses the knowledge base's `unverified_sample` vocabulary for exactly the reason it exists there:
+  an invented boundary must not look like a surveyed one. A citizen whose GPS fix lands outside every
+  seeded union (i.e. almost everyone, at this corpus size) falls back to picking their union from a
+  list, recorded as `manual_attestation` rather than `gps_geofence` — a real, disclosed difference in
+  evidence strength, not two paths presented as equivalent.
+- No PostGIS. The point-in-polygon test is a plain ray-cast over a handful of authored polygons —
+  appropriate at this scale, not at national scale. A real corpus of thousands of union boundaries
+  would need a spatial index, the same way `modules/places/overpass.ts` needed a grid cache once real
+  OSM volume existed.
+
+**Phase 2 — citizen voice ("Amar Union, Amar Sheba").**
+- **Issue photos have no object-storage writer**, the same gap PRD Feature 8 already left open in
+  AccessAI's own scope (§15 above). Rather than block reporting on it, `modules/issues/photo-storage.ts`
+  writes to `public/uploads/issues/<uuid>.<ext>` and serves it statically — zero-config, matching the
+  single-file-database ethos, but with two real costs a production deployment must not inherit
+  unexamined: an uploaded photo is reachable by anyone with its (unguessable) URL, and nothing here
+  virus-scans it. An S3/R2-backed writer behind the same interface is the natural next step.
+- **Keyword moderation is a short, illustrative list** (`modules/issues/moderation.ts`), not a
+  maintained lexicon — it flags a report for closer human review, and never auto-rejects one. Every
+  report reaches a moderator regardless; the flag is a priority signal, not a verdict.
+- **The issue state machine is enforced, not just documented**
+  (`modules/issues/state-machine.ts`): `transitionIssueStatus` refuses any move the map does not
+  list. Approving `under_review → verified/rejected` happens in `/admin/moderation`, alongside every
+  other content decision; every other transition (`verified → in_progress → completed`, and
+  `→ archived` from any resolved state) is a staff-only action on the issue's own page, matching the
+  source spec's "officials update issue status with evidence."
+- **Escalation to an Upazila/Zila officer is not built.** Those roles do not exist in `USER_ROLES` —
+  extending the role hierarchy is Phase 3 of the same roadmap, and flag-ratio thresholds and a budget
+  ledger are Phase 3 work this phase deliberately does not anticipate.
+- **Viewing and voting are scoped to the citizen's own verified union**, never a union id supplied by
+  the request — resolved from `userProfiles.residencyUnionId`, set only by Phase 1. A citizen with no
+  verified residency sees a plain "verify your union first" state, not an empty feed that looks like
+  a bug.
 - **PWA / push notifications** are not implemented. Notifications are persisted and shown in-app.
