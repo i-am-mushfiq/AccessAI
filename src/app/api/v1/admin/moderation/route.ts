@@ -6,9 +6,10 @@ import { feedback, knowledgeReviews, users, opportunities, aiLogs, messages } fr
 import { ok, readJson, handle, fail, ERROR_CODES } from '@/lib/http/response';
 import { requireStaff, canApproveChanges } from '@/lib/http/session';
 import { recordAudit } from '@/modules/admin/admin.service';
+import { listPendingIssues, transitionIssueStatus } from '@/modules/issues/issue.service';
 
 const decisionSchema = z.object({
-  kind: z.enum(['feedback', 'review']),
+  kind: z.enum(['feedback', 'review', 'issue']),
   id: z.string().uuid(),
   status: z.string(),
   note: z.string().trim().max(1000).nullish(),
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
 
     const status = new URL(request.url).searchParams.get('status') ?? 'new';
 
-    const [pendingFeedback, pendingReviews, counts] = await Promise.all([
+    const [pendingFeedback, pendingReviews, pendingIssues, counts] = await Promise.all([
       db
         .select({
           feedback,
@@ -52,6 +53,7 @@ export async function GET(request: NextRequest) {
         .where(status === 'all' ? undefined : eq(knowledgeReviews.status, 'pending'))
         .orderBy(desc(knowledgeReviews.createdAt))
         .limit(100),
+      listPendingIssues(100),
       db.select({ status: feedback.status, n: sql<number>`count(*)` }).from(feedback).groupBy(feedback.status),
     ]);
 
@@ -73,6 +75,7 @@ export async function GET(request: NextRequest) {
     return ok({
       feedback: pendingFeedback,
       reviews: pendingReviews,
+      issues: pendingIssues,
       groundingFailures,
       counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])),
     });
@@ -112,6 +115,29 @@ export async function PATCH(request: NextRequest) {
         after: { status: body.status, note: body.note ?? null },
       });
       return ok({ feedback: updated });
+    }
+
+    if (body.kind === 'issue') {
+      if (!['verified', 'rejected'].includes(body.status)) {
+        return fail(ERROR_CODES.VALIDATION_FAILED, 'A report must be verified or rejected here.');
+      }
+      const result = await transitionIssueStatus({
+        issueId: body.id,
+        toStatus: body.status as 'verified' | 'rejected',
+        actorId: guard.session.userId,
+        note: body.note,
+      });
+      if (!result.ok) return fail(ERROR_CODES.NOT_FOUND, result.reason ?? 'That report could not be found.');
+
+      await recordAudit({
+        actorId: guard.session.userId,
+        actorRole: guard.session.role,
+        action: `issue.${body.status}`,
+        entityType: 'issue',
+        entityId: body.id,
+        after: { status: body.status, note: body.note ?? null },
+      });
+      return ok({ issue: result.issue });
     }
 
     // Approving a knowledge change alters what citizens are told, so it needs

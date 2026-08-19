@@ -27,6 +27,7 @@ export function ModerationQueue({
   feedbackItems,
   reviews,
   groundingFailures,
+  pendingIssues,
   canApprove,
 }: {
   readonly feedbackItems: readonly {
@@ -39,20 +40,25 @@ export function ModerationQueue({
   readonly groundingFailures: readonly {
     id: string; createdAt: string; inputSummary: string | null; outputSummary: string | null; engine: string;
   }[];
+  readonly pendingIssues: readonly {
+    id: string; category: string; title: string; description: string; autoFlagged: boolean;
+    autoFlagReason: string | null; reporterName: string; unionName: string; createdAt: string;
+  }[];
   readonly canApprove: boolean;
 }) {
   const t = useTranslations('admin');
+  const ti = useTranslations('issues');
   const tc = useTranslations('common');
   const te = useTranslations('errors');
   const locale = useLocale() as 'bn' | 'en';
   const toast = useToast();
   const router = useRouter();
 
-  const [tab, setTab] = useState<'feedback' | 'reviews' | 'grounding'>('feedback');
+  const [tab, setTab] = useState<'feedback' | 'reviews' | 'issues' | 'grounding'>('feedback');
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const decide = useMutation({
-    mutationFn: (input: { kind: 'feedback' | 'review'; id: string; status: string }) =>
+    mutationFn: (input: { kind: 'feedback' | 'review' | 'issue'; id: string; status: string }) =>
       api.patch('/admin/moderation', input),
     onSuccess: () => {
       toast.show({ tone: 'success', message: tc('saved') });
@@ -72,6 +78,7 @@ export function ModerationQueue({
         items={[
           { value: 'feedback' as const, label: t('moderation'), count: newFeedback.length },
           { value: 'reviews' as const, label: t('rules'), count: pendingReviews.length },
+          { value: 'issues' as const, label: t('issuesTab'), count: pendingIssues.length },
           { value: 'grounding' as const, label: t('groundingFailures'), count: groundingFailures.length },
         ]}
         value={tab}
@@ -221,6 +228,67 @@ export function ModerationQueue({
                       </Button>
                     </div>
                   ) : null}
+                </Card>
+              </li>
+            ))}
+          </ul>
+        )
+      ) : null}
+
+      {tab === 'issues' ? (
+        pendingIssues.length === 0 ? (
+          <EmptyState title={tc('none')} />
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {pendingIssues.map((issue) => (
+              <li key={issue.id}>
+                <Card padding="default" className="flex flex-col gap-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="neutral">{ti(`category.${issue.category}`)}</Badge>
+                        {issue.autoFlagged ? <Badge tone="warning">{ti('autoFlagReason')}</Badge> : null}
+                      </div>
+                      <p className="type-body-lg mt-1 text-text-primary">{issue.title}</p>
+                      <p className="type-body-md mt-1 text-text-secondary clamp-2">{issue.description}</p>
+                      {issue.autoFlagged && issue.autoFlagReason ? (
+                        <p className="type-caption mt-1 text-ramp-warning-600">{issue.autoFlagReason}</p>
+                      ) : null}
+                      <p className="type-caption mt-1 text-text-tertiary">
+                        {ti('reportedBy')} {issue.reporterName} · {issue.unionName} ·{' '}
+                        {formatTimeAgo(new Date(issue.createdAt), locale)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      loading={pendingId === `${issue.id}-verified`}
+                      loadingLabel={tc('loading')}
+                      onClick={() => {
+                        setPendingId(`${issue.id}-verified`);
+                        decide.mutate({ kind: 'issue', id: issue.id, status: 'verified' });
+                      }}
+                      leadingIcon={<Check size={20} className="icon" />}
+                    >
+                      {t('approve')}
+                    </Button>
+                    <Button
+                      variant="danger-subtle"
+                      size="md"
+                      loading={pendingId === `${issue.id}-rejected`}
+                      loadingLabel={tc('loading')}
+                      onClick={() => {
+                        setPendingId(`${issue.id}-rejected`);
+                        decide.mutate({ kind: 'issue', id: issue.id, status: 'rejected' });
+                      }}
+                      leadingIcon={<X size={20} className="icon" />}
+                    >
+                      {t('reject')}
+                    </Button>
+                  </div>
                 </Card>
               </li>
             ))}

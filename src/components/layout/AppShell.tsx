@@ -4,7 +4,7 @@ import { useCallback, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   Home, MessageCircle, LayoutGrid, CalendarDays, Bookmark,
-  Bell, User, Settings, Shield, MapPin, LogOut, HelpCircle,
+  Bell, User, Settings, Shield, MapPin, LogOut, HelpCircle, MessageSquareWarning, ShieldCheck,
 } from 'lucide-react';
 import { Link, usePathname } from '@/i18n/navigation';
 import { cn } from '@/lib/utils/cn';
@@ -45,6 +45,8 @@ const PRIMARY_NAV: readonly NavItem[] = [
 
 const SECONDARY_NAV: readonly NavItem[] = [
   { href: '/nearby', labelKey: 'nearby', icon: MapPin },
+  { href: '/issues', labelKey: 'issues', icon: MessageSquareWarning },
+  { href: '/identity', labelKey: 'identity', icon: ShieldCheck },
   { href: '/notifications', labelKey: 'notifications', icon: Bell },
   { href: '/profile', labelKey: 'profile', icon: User },
   { href: '/settings', labelKey: 'settings', icon: Settings },

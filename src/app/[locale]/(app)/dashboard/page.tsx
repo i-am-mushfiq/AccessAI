@@ -9,6 +9,7 @@ import { conversations, timelineEvents, opportunities, actionPlanTasks, actionPl
 import { getFullSession } from '@/lib/http/session';
 import { listOpportunities } from '@/modules/opportunities/opportunity.service';
 import { listSaved, savedCounts, syncTimelineDeadlines } from '@/modules/citizen/citizen.service';
+import { listMyIssues } from '@/modules/issues/issue.service';
 import { toEligibilityProfile, profileCompleteness, suggestNextFields } from '@/modules/eligibility/profile-mapper';
 import { fieldLabel } from '@/modules/eligibility/engine';
 import { Link } from '@/i18n/navigation';
@@ -49,7 +50,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
 
   const today = startOfDay(new Date());
 
-  const [recommended, saved, counts, upcoming, recentConversation, todayTasks] = await Promise.all([
+  const [recommended, saved, counts, upcoming, recentConversation, todayTasks, myIssues] = await Promise.all([
     listOpportunities({
       profile,
       userId: session.userId,
@@ -91,12 +92,14 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
       )
       .orderBy(asc(actionPlanTasks.dueDate))
       .limit(5),
+    listMyIssues(session.userId, 3),
   ]);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? t('greetingMorning') : hour < 17 ? t('greetingAfternoon') : t('greetingEvening');
   const suggested = suggestNextFields(profile, 1)[0];
   const ai = describeAiMode();
+  const ti = await getTranslations('issues');
 
   const quickActions: readonly {
     href: string;
@@ -315,6 +318,29 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
           </div>
         )}
       </Section>
+
+      {/* -------------------------------------------------- my reports */}
+      {myIssues.length > 0 ? (
+        <Section
+          title={ti('myReports')}
+          action={<Link href="/issues?mine=1" className="type-label-lg text-text-link underline">{tc('viewAll')}</Link>}
+        >
+          <ul className="flex flex-col gap-2">
+            {myIssues.map((issue) => (
+              <li key={issue.id}>
+                <Card padding="compact" className="flex items-center gap-3">
+                  <span className="min-w-0 flex-1">
+                    <span className="type-body-lg block text-text-primary clamp-2">{issue.title}</span>
+                  </span>
+                  <Badge tone={issue.status === 'verified' || issue.status === 'completed' ? 'success' : 'neutral'}>
+                    {ti(`status.${issue.status}`)}
+                  </Badge>
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
 
       {/* -------------------------------------------- recent conversation */}
       {recentConversation[0] ? (

@@ -6,6 +6,7 @@ import { feedback, users, opportunities, aiLogs, knowledgeReviews } from '@/lib/
 import { getFullSession, isStaff, canApproveChanges } from '@/lib/http/session';
 import { AdminNav } from '@/components/admin/AdminNav';
 import { ModerationQueue } from '@/components/admin/ModerationQueue';
+import { listPendingIssues } from '@/modules/issues/issue.service';
 
 /**
  * Review queue — the human gate PRD §34 requires.
@@ -24,7 +25,7 @@ export default async function AdminModerationPage({ params }: { params: Promise<
 
   const t = await getTranslations('admin');
 
-  const [items, reviews, groundingFailures] = await Promise.all([
+  const [items, reviews, pendingIssues, groundingFailures] = await Promise.all([
     db
       .select({
         id: feedback.id,
@@ -43,6 +44,7 @@ export default async function AdminModerationPage({ params }: { params: Promise<
       .orderBy(desc(feedback.createdAt))
       .limit(100),
     db.select().from(knowledgeReviews).orderBy(desc(knowledgeReviews.createdAt)).limit(50),
+    listPendingIssues(100),
     db
       .select({
         id: aiLogs.id,
@@ -91,6 +93,17 @@ export default async function AdminModerationPage({ params }: { params: Promise<
           inputSummary: log.inputSummary,
           outputSummary: log.outputSummary,
           engine: log.engine,
+        }))}
+        pendingIssues={pendingIssues.map(({ issue, reporterName, unionName }) => ({
+          id: issue.id,
+          category: issue.category,
+          title: issue.title,
+          description: issue.description,
+          autoFlagged: issue.autoFlagged,
+          autoFlagReason: issue.autoFlagReason,
+          reporterName,
+          unionName,
+          createdAt: issue.createdAt.toISOString(),
         }))}
         canApprove={canApproveChanges(session.user.role)}
       />
