@@ -671,3 +671,94 @@ plaintext this pass:
   audit-log entries now store `medicalConditions: "[redacted]"` in `before`/`after`, never the
   decrypted value — encrypting the primary column while a side table kept a plaintext copy of the same
   data would have defeated the point.
+
+## 20. `demo` providers for SMS and vision moderation — explicit, not a relaxation of the honesty rule
+
+SJ-23/48 and SJ-21 both needed a real vendor account to show their "full" path, which nobody
+demonstrating this pilot has. Rather than leave those paths only demonstrable by reading the code, both
+now accept a fourth, explicit provider value: `SMS_PROVIDER=demo` and `VISION_MODERATION_PROVIDER=demo`.
+
+**This is deliberately narrower than it might sound.** Neither demo mode invents a verdict about
+anything a citizen or an auditor would rely on:
+
+- **SMS demo** (`modules/notifications/sms.service.ts`) does not simulate delivery success in any way
+  that could be mistaken for one — it logs the outgoing message to the server console, prefixed
+  `[SMS:DEMO]`, with the line "no real message was sent" printed in the same log entry. It exists
+  purely to demonstrate the *code path* (OTP request → dispatch → success), not to claim a text
+  arrived on a real handset.
+- **Vision moderation demo** (`modules/issues/vision-moderation.ts`) does not attempt real content
+  classification — it never did, and does not start now. It runs one deterministic, disclosed check
+  (an image under ~2KB, the size of a placeholder rather than a camera photo, is flagged; anything
+  larger passes) and records the result as `demo_flagged`/`demo_passed` — two enum values that exist
+  *only* for this mode and can never collide with `flagged`/`passed`, the values a real vision-model
+  call produces. A database row can always be traced back to whether a real model or the demo
+  heuristic produced it, even though nothing in the citizen-facing UI currently surfaces that
+  distinction (only the staff moderation queue renders the flag reason at all).
+
+**Why this is the right shape for a demo feature, not a workaround:** the alternative was either (a)
+leave both paths permanently unshowable without a live vendor credential, or (b) make the "unavailable"
+fallback quietly return a fabricated pass/fail without labelling it — which is exactly the failure
+mode `docs/DEVIATIONS.md` has argued against everywhere else in this document (NID, STT, the original
+vision-moderation seam). `demo` sits in neither position: it is opt-in (an operator must set the env
+var by name), it is visible in the data it produces, and it never claims to be the real provider it is
+standing in for.
+
+## 21. Closing the end-user-facing demo gaps — what closed for real, and the one ceiling that did not
+
+A follow-up pass asked for every remaining end-user-facing gap to be implemented "fully, no corners
+cut." Three genuinely closed; one did not, and that limit was verified rather than assumed.
+
+**Beneficiary enrolment, entitlement creation, and disbursement recording (#21–23) are now real UI, not
+just API routes.** `/beneficiaries` (roll), `/beneficiaries/new` (enrol), `/beneficiaries/:id` (view +
+record a disbursement) — all built on the exact same authorised, already-existing service functions
+(`enrollBeneficiary`, `recordDisbursement`, both already ledger-anchored) that only ever had a citizen-
+facing read view and a raw API in front of them before. `getBeneficiaryDetail` was added to
+`entitlement.service.ts` by extracting the shared body out of `statusForNidHash` into
+`buildStatusResult`, so the union-official detail screen and the citizen's own `/entitlements` status
+check are provably answering from the same logic, not two implementations that could quietly drift.
+Live-verified end to end: enrol → view → record a disbursement, through the real routes.
+
+**The USSD gateway (#36–39) now has a browser-based phone simulator**, not just a curl/Postman
+walkthrough. `POST /api/v1/ussd/simulate` calls the identical `handleUssdCallback()` the real,
+secret-gated `/api/v1/ussd/callback` calls — it carries no capability the real callback lacks, so it
+needs neither a session nor the shared secret; see that route's own doc comment for the full reasoning.
+`/ussd-demo` renders it as an actual phone-shaped screen a presenter can dial, type into, and hang up,
+live-verified against real seeded data (checked Rahima's entitlement status by NID, watched the
+`CON`/`END` text render). This closes the gap between "the logic works" (already true) and "an audience
+can watch someone use it" (not true before this pass) — the one thing curl could never do.
+
+**`SMS_PROVIDER=demo` now writes to a staff-visible outbox (`/admin/sms-outbox`), not only a server
+console log an audience in a browser demo could never see.** `demo_sms_outbox` is a new table, cleared
+on every reseed like `ussd_sessions`, staff-gated to view for the same reason an OTP must never be
+readable by an unauthenticated visitor even in a demo build. This is the honest limit of what the
+"visible outbox" idea can close: a demo can now show *a record of what would have been sent*; it still
+cannot make a real SMS arrive on a real phone, which needs a real vendor account this environment does
+not have and this document cannot manufacture.
+
+**Two real bugs were found and fixed while wiring the anomaly checks up, not invented for this section.**
+`detectUnverifiedBeneficiaryIdentity` (SJ-19, the ghost-beneficiary check) had been written, unit-tested,
+and exported as `listUnverifiedBeneficiaryAlerts` — and never actually called from anywhere.
+`getLeaderPortalData`'s anomalies array only ever ran the other three checks. It would have stayed
+correctly-implemented-but-unreachable indefinitely, because nothing short of tracing every exported
+function to an actual caller would have caught it — a live-verification pass on the *demo data*, not the
+code, is what surfaced it. Folded into `getLeaderPortalData` directly and the now-dead standalone
+wrapper deleted. Separately, the seed data was extended with one deliberately-triggering example of
+each of the five anomaly checks (an oversized allocation, a beneficiary double-enrolled across two
+unions, an overpaid disbursement, an escalation backdated 20 days, and two beneficiaries whose NIDs
+were never verified by anyone) — previously a fresh `npm run db:seed` produced a Leader Portal that
+correctly, but uselessly, showed an empty alerts section until someone manufactured an example by hand.
+All five now fire live on a clean reseed with no manual setup, verified via the real `/api/v1/leader/overview` endpoint.
+
+**What did NOT get fully implemented, verified by testing rather than assumed: a genuinely real,
+content-aware vision check (SJ-21) is not achievable in this environment, full stop — not a matter of
+more engineering effort.** Before writing any of this section, the two candidate providers were tested
+live: `ANTHROPIC_API_KEY` is present in this environment's configuration but is set to an empty string
+(no real key), and the one real, working key present — `DEEPSEEK_API_KEY`, the platform's actual active
+AI provider — was tested directly against DeepSeek's real endpoint with an image payload and rejected
+it outright: `"unknown variant image_url, expected text"`. DeepSeek's exposed chat API is text-only.
+There is no way to make `VISION_MODERATION_PROVIDER` do genuine image understanding without a real
+OpenAI or Anthropic key that does not exist here, and inventing a heuristic that *pretends* to
+understand image content would be exactly the fabricated-verdict failure mode this entire document has
+argued against since Phase 1. The size-based `demo` heuristic added in §20 remains the honest ceiling
+for this environment; the code path to a real provider was already correct and needs nothing more than
+a real key to light up.

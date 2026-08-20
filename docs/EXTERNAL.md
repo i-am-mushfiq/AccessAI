@@ -141,7 +141,7 @@ email). **Mandatory:** not for development.
 
 ```bash
 OTP_DEV_ECHO="true"              # development: the code is logged AND shown, labelled
-SMS_PROVIDER="ssl_wireless"      # ssl_wireless | bulksmsbd | twilio
+SMS_PROVIDER="ssl_wireless"      # ssl_wireless | bulksmsbd | twilio | demo
 SMS_API_KEY=""
 SMS_SID=""                       # SSL Wireless and Twilio need this in addition to SMS_API_KEY
 SMS_SENDER_ID=""
@@ -171,6 +171,10 @@ did.
 
 A `+880` sender ID needs BTRC-registered masking; without it, messages arrive from a shortcode and
 some operators filter them. That is an operational prerequisite, not a code one.
+
+**A fourth option, `SMS_PROVIDER="demo"`, needs no credentials at all.** It logs the outgoing message
+to the server console prefixed `[SMS:DEMO]` and always succeeds — for demonstrating the OTP/SMS code
+path with no vendor account, never for production use. See docs/DEVIATIONS.md §20.
 
 ---
 
@@ -213,18 +217,23 @@ app, which is stateless.
 size and MIME type before Phase 5 — a photo could be anything.
 
 ```bash
+VISION_MODERATION_PROVIDER=""                              # unset | demo
 VISION_MODERATION_API_KEY=""
 VISION_MODERATION_BASE_URL="https://api.openai.com/v1"    # OpenAI-compatible, vision-capable
 VISION_MODERATION_MODEL="gpt-4o-mini"
 ```
 
-**Without a key** (the state of this repository), every submitted photo is marked
+**Without a key or provider** (the default), every submitted photo is marked
 `visionModerationStatus: "unavailable"` and auto-flagged for manual review — never silently passed
 through, and never given an invented pass/fail from a technique that cannot actually assess image
 content. **With a key**, a real `/chat/completions` call with an image content part asks the model
 whether the photo shows graphic content or is clearly unrelated to a civic complaint, and the issue is
-flagged or passed based on an actual answer. See
-[src/modules/issues/vision-moderation.ts](../src/modules/issues/vision-moderation.ts).
+flagged or passed based on an actual answer. **With `VISION_MODERATION_PROVIDER="demo"`** (no key
+needed), a deterministic size check stands in — flagging anything under ~2KB, passing anything
+larger — recorded as `demo_flagged`/`demo_passed`, never the real `flagged`/`passed` values, so a demo
+run can never be mistaken for a real model's verdict later. See
+[src/modules/issues/vision-moderation.ts](../src/modules/issues/vision-moderation.ts) and
+docs/DEVIATIONS.md §20.
 
 ---
 
@@ -533,6 +542,7 @@ Validated by Zod at boot in [src/lib/config/env.ts](../src/lib/config/env.ts); a
 | `OTP_DEV_ECHO` | `true` | Shows the OTP in the UI, labelled. **Blocked in production** |
 | `SMS_PROVIDER` / `SMS_API_KEY` / `SMS_SID` / `SMS_SENDER_ID` | — | Gateway credentials — see §4 |
 | `USSD_GATEWAY_SECRET` | — | Shared secret for `/api/v1/ussd/callback` — see §4b |
+| `VISION_MODERATION_PROVIDER` | — | `demo` for a no-key simulated check — see §4c |
 | `VISION_MODERATION_API_KEY` / `_BASE_URL` / `_MODEL` | `https://api.openai.com/v1` / `gpt-4o-mini` | Issue-photo moderation — see §4c |
 | `FIELD_ENCRYPTION_KEY` | dev fallback | AES-256-GCM key for `medicalConditions` at rest (base64, 32 bytes). **Must be replaced** |
 | `NEXT_PUBLIC_MAP_PROVIDER` | `none` | `none \| mapbox \| google` |
