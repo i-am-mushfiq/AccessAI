@@ -462,6 +462,12 @@ export type DisbursementStatus = (typeof DISBURSEMENT_STATUSES)[number];
 // SJ-21. `not_applicable` is the default for every issue without a photo;
 // `unavailable` means a photo was submitted but no vision provider is
 // configured, which is why it still routes to human review rather than
-// passing silently — see modules/issues/vision-moderation.ts.
-export const VISION_MODERATION_STATUSES = ['not_applicable', 'unavailable', 'passed', 'flagged'] as const;
+// passing silently. `demo_passed`/`demo_flagged` are a separate pair of
+// values, never `passed`/`flagged`, so a row produced by
+// VISION_MODERATION_PROVIDER=demo's simulated check can never be mistaken
+// for a real vision-model verdict later, even though nothing in the citizen
+// UI currently renders the distinction — see modules/issues/vision-moderation.ts.
+export const VISION_MODERATION_STATUSES = [
+  'not_applicable', 'unavailable', 'passed', 'flagged', 'demo_passed', 'demo_flagged',
+] as const;
 export type VisionModerationStatus = (typeof VISION_MODERATION_STATUSES)[number];

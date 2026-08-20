@@ -1,3 +1,6 @@
+import { desc } from 'drizzle-orm';
+import { db } from '@/lib/db/client';
+import { demoSmsOutbox } from '@/lib/db/schema';
 import { env } from '@/lib/config/env';
 
 /**
@@ -7,6 +10,14 @@ import { env } from '@/lib/config/env';
  * `SMS_PROVIDER`/`SMS_API_KEY` still throws rather than pretending to send
  * (unchanged); naming a provider now actually dispatches to it instead of
  * throwing "not implemented".
+ *
+ * `SMS_PROVIDER=demo` is a fourth, deliberate option: it needs no API key,
+ * "sends" by logging the message to the server console labelled
+ * `[SMS:DEMO]` AND recording it in `demo_sms_outbox` (staff-visible at
+ * /admin/sms-outbox, so a live demo has something to point at that looks
+ * like "the phone received a text" instead of a server log nobody in the
+ * room can see) — and always succeeds. It is never returned as, or
+ * recorded to look like, a real network delivery.
  */
 
 export class SmsDeliveryError extends Error {
@@ -75,22 +86,41 @@ async function sendViaTwilio(phone: string, text: string): Promise<void> {
   }
 }
 
+async function sendViaDemo(phone: string, text: string): Promise<void> {
+  // eslint-disable-next-line no-console
+  console.log(
+    `\n[SMS:DEMO] → ${phone}\n${text}\n(SMS_PROVIDER=demo — no real message was sent. Set a real provider + SMS_API_KEY to deliver one.)\n`,
+  );
+  await db.insert(demoSmsOutbox).values({ phone, body: text });
+}
+
+/** Staff-visible record of everything `SMS_PROVIDER=demo` has "sent" — see /admin/sms-outbox. */
+export async function listDemoSmsOutbox(limit = 50) {
+  return db.select().from(demoSmsOutbox).orderBy(desc(demoSmsOutbox.createdAt)).limit(limit);
+}
+
 const PROVIDERS: Record<string, (phone: string, text: string) => Promise<void>> = {
   ssl_wireless: sendViaSslWireless,
   bulksmsbd: sendViaBulkSmsBd,
   twilio: sendViaTwilio,
+  demo: sendViaDemo,
 };
 
 /**
  * Dispatches a text message through whichever provider `SMS_PROVIDER` names.
  * Throws `SmsDeliveryError` on any failure — a citizen waiting for an OTP or
  * a status update that silently never arrived is the one failure mode this
- * module must never produce quietly.
+ * module must never produce quietly. The one exception by design is
+ * `demo`, which needs no `SMS_API_KEY` at all — see the module doc comment.
  */
 export async function dispatchSms(phone: string, text: string): Promise<void> {
+  if (env.SMS_PROVIDER === 'demo') {
+    await sendViaDemo(phone, text);
+    return;
+  }
   if (!env.SMS_PROVIDER || !env.SMS_API_KEY) {
     throw new SmsDeliveryError('SMS delivery is not configured on this server.', {
-      hint: 'Set SMS_PROVIDER and SMS_API_KEY, or enable OTP_DEV_ECHO for development.',
+      hint: 'Set SMS_PROVIDER and SMS_API_KEY, set SMS_PROVIDER=demo for a demo, or enable OTP_DEV_ECHO for development.',
     });
   }
   const send = PROVIDERS[env.SMS_PROVIDER];

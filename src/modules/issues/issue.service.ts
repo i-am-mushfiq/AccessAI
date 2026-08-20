@@ -5,7 +5,7 @@ import type { Issue } from '@/lib/db/schema';
 import type { IssueCategory, IssueStatus } from '@/lib/domain/enums';
 import { screenIssueText } from './moderation';
 import { saveIssuePhoto } from './photo-storage';
-import { moderateIssuePhoto } from './vision-moderation';
+import { moderateIssuePhoto, type VisionModerationResult } from './vision-moderation';
 import { canTransition, PUBLICLY_VISIBLE_STATUSES } from './state-machine';
 
 /**
@@ -34,11 +34,7 @@ export async function submitIssue(input: SubmitIssueInput): Promise<Issue> {
   const screen = screenIssueText(input.title, input.description);
 
   let photoUrl: string | null = null;
-  let vision: { readonly status: 'not_applicable' | 'unavailable' | 'passed' | 'flagged'; readonly flagged: boolean; readonly reason: string | null } = {
-    status: 'not_applicable',
-    flagged: false,
-    reason: null,
-  };
+  let vision: VisionModerationResult = { status: 'not_applicable', flagged: false, reason: null };
   if (input.photoDataUrl) {
     vision = await moderateIssuePhoto(input.photoDataUrl);
     const saved = await saveIssuePhoto(input.photoDataUrl);

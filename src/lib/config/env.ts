@@ -97,6 +97,14 @@ const schema = z.object({
   DEEPSEEK_EXTRA_BODY: optionalStr,
 
   OTP_DEV_ECHO: bool(true),
+  /**
+   * `ssl_wireless | bulksmsbd | twilio` dispatch a real message and need
+   * SMS_API_KEY. `demo` needs no credential at all: it logs the message to
+   * the server console, clearly labelled `[SMS:DEMO]`, and returns success —
+   * for demonstrating the code path (delivery confirmation, error handling)
+   * without a live vendor account. Never returned as a real send: nothing
+   * downstream can mistake it for one. See docs/DEVIATIONS.md.
+   */
   SMS_PROVIDER: optionalStr,
   SMS_API_KEY: optionalStr,
   SMS_SENDER_ID: optionalStr,
@@ -197,8 +205,17 @@ const schema = z.object({
    * STT/TTS: an OpenAI-compatible `/chat/completions` endpoint whose model
    * accepts an image content part. Without a key, an uploaded issue photo is
    * marked `unavailable` and routed to human review rather than either
-   * silently passing or inventing a verdict — see modules/issues/vision-moderation.ts.
+   * silently passing or inventing a verdict.
+   *
+   * `VISION_MODERATION_PROVIDER=demo` needs no key: a deterministic,
+   * declared-as-simulated check (flags a photo under ~2KB, the size of a
+   * placeholder/test image, passes anything larger) so the moderation
+   * pipeline can be demonstrated end to end. Recorded as `demo_passed`/
+   * `demo_flagged`, never `passed`/`flagged`, so it can never be mistaken
+   * for a real vision-model verdict later. See modules/issues/vision-moderation.ts
+   * and docs/DEVIATIONS.md.
    */
+  VISION_MODERATION_PROVIDER: optionalStr,
   VISION_MODERATION_API_KEY: optionalStr,
   VISION_MODERATION_BASE_URL: nonEmpty.default('https://api.openai.com/v1'),
   VISION_MODERATION_MODEL: nonEmpty.default('gpt-4o-mini'),

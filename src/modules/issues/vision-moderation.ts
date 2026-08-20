@@ -10,11 +10,20 @@ import type { VisionModerationStatus } from '@/lib/domain/enums';
  * NOT mean "let the photo through." A photo nobody has checked is routed to
  * human review (`autoFlagged: true`), matching the existing text keyword
  * filter's own honesty rule: uncertain is a signal for a human, never a
- * silent pass. What this module explicitly does NOT attempt is real
- * NSFW/violence classification without a configured model — that would
- * require an actual vision model, which is exactly the seam below calls out
- * to when one is configured; there is no local heuristic standing in for it,
- * because a wrong invented verdict is worse than an honest "not checked."
+ * silent pass. What this module explicitly does NOT attempt, even in demo
+ * mode, is real NSFW/violence classification without a configured model —
+ * that would require an actual vision model, which is exactly the seam
+ * below calls out to when one is configured; there is no local heuristic
+ * standing in for real content classification, because a wrong invented
+ * verdict is worse than an honest "not checked."
+ *
+ * `VISION_MODERATION_PROVIDER=demo` is a separate, narrower thing: a
+ * deterministic, declared-as-simulated size check (a photo under ~2KB —
+ * the size of a placeholder/test image, not a real camera photo — is
+ * flagged; anything larger passes) so the moderation pipeline can be
+ * demonstrated end to end with no vendor key. Recorded as `demo_passed`/
+ * `demo_flagged`, never `passed`/`flagged`, so it is never mistaken for a
+ * real vision-model result later.
  */
 
 export interface VisionModerationResult {
@@ -78,12 +87,31 @@ async function callVisionModerator(photoDataUrl: string): Promise<VisionVerdict>
   };
 }
 
+const DEMO_MIN_BYTES = 2000;
+
+/** A deterministic, clearly-simulated stand-in for a real vision check — see the module doc comment. */
+function simulateModeration(photoDataUrl: string): VisionModerationResult {
+  const base64 = photoDataUrl.slice(photoDataUrl.indexOf(',') + 1);
+  const approxBytes = Math.floor((base64.length * 3) / 4);
+  if (approxBytes < DEMO_MIN_BYTES) {
+    return {
+      status: 'demo_flagged',
+      flagged: true,
+      reason: `Demo mode: this image is only ~${approxBytes} bytes, too small to be a genuine site photo (simulated check, not a real vision-model result).`,
+    };
+  }
+  return { status: 'demo_passed', flagged: false, reason: null };
+}
+
 /**
  * Never throws: a provider error is treated the same as "not configured" —
  * routed to human review, since a moderation call that failed is exactly as
  * unverified as one that was never made.
  */
 export async function moderateIssuePhoto(photoDataUrl: string): Promise<VisionModerationResult> {
+  if (env.VISION_MODERATION_PROVIDER === 'demo') {
+    return simulateModeration(photoDataUrl);
+  }
   if (!env.VISION_MODERATION_API_KEY) {
     return { status: 'unavailable', flagged: true, reason: 'No vision moderation provider configured — routed for manual review.' };
   }
