@@ -41,15 +41,12 @@ export interface EntitlementStatusResult {
 }
 
 /**
- * Shared by both `checkMyEntitlementStatus` (a logged-in citizen, looked up
- * by their own verified NID hash) and `checkEntitlementStatusByNid` (SJ-23's
- * USSD path, which has no account or session — only whatever NID the caller
- * keys in).
+ * Shared by every caller that already has a beneficiary row in hand:
+ * `statusForNidHash` (below), and `getBeneficiaryDetail` (the union-official
+ * beneficiary detail screen). Fetches that beneficiary's entitlements and
+ * each entitlement's disbursements.
  */
-async function statusForNidHash(nidHash: string): Promise<EntitlementStatusResult> {
-  const [beneficiary] = await db.select().from(beneficiaries).where(eq(beneficiaries.nidHash, nidHash)).limit(1);
-  if (!beneficiary) return { enrolled: false, reason: 'not_enrolled' };
-
+async function buildStatusResult(beneficiary: typeof beneficiaries.$inferSelect): Promise<EntitlementStatusResult> {
   const entitlementRows = await db
     .select()
     .from(entitlements)
@@ -89,6 +86,18 @@ async function statusForNidHash(nidHash: string): Promise<EntitlementStatusResul
     },
     entitlements: withDisbursements,
   };
+}
+
+/**
+ * Shared by both `checkMyEntitlementStatus` (a logged-in citizen, looked up
+ * by their own verified NID hash) and `checkEntitlementStatusByNid` (SJ-23's
+ * USSD path, which has no account or session — only whatever NID the caller
+ * keys in).
+ */
+async function statusForNidHash(nidHash: string): Promise<EntitlementStatusResult> {
+  const [beneficiary] = await db.select().from(beneficiaries).where(eq(beneficiaries.nidHash, nidHash)).limit(1);
+  if (!beneficiary) return { enrolled: false, reason: 'not_enrolled' };
+  return buildStatusResult(beneficiary);
 }
 
 /** Matched by the SAME hash Phase 1's NID verification produces — never the raw number. */
@@ -199,4 +208,24 @@ export async function listBeneficiariesForUnion(unionId: string) {
     .from(beneficiaries)
     .where(and(eq(beneficiaries.unionId, unionId)))
     .orderBy(asc(beneficiaries.createdAt));
+}
+
+export interface BeneficiaryDetailResult extends EntitlementStatusResult {
+  readonly beneficiaryId: string;
+  readonly unionId: string;
+}
+
+/**
+ * The union-official-facing counterpart to `checkMyEntitlementStatus`: same
+ * shape (entitlements + their disbursements), but looked up by beneficiary
+ * id rather than the citizen's own NID hash, for the enrollment/disbursement
+ * management screen. `unionId` is returned so the calling route can check
+ * the viewer is actually an official of THIS beneficiary's union before
+ * showing anything — this function itself does no authorisation.
+ */
+export async function getBeneficiaryDetail(beneficiaryId: string): Promise<BeneficiaryDetailResult | null> {
+  const [beneficiary] = await db.select().from(beneficiaries).where(eq(beneficiaries.id, beneficiaryId)).limit(1);
+  if (!beneficiary) return null;
+  const result = await buildStatusResult(beneficiary);
+  return { ...result, beneficiaryId: beneficiary.id, unionId: beneficiary.unionId };
 }

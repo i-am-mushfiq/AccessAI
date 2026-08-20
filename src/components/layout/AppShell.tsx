@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import {
   Home, MessageCircle, LayoutGrid, CalendarDays, Bookmark,
   Bell, User, Settings, Shield, MapPin, LogOut, HelpCircle, MessageSquareWarning, ShieldCheck,
-  Landmark, HandCoins, ClipboardCheck,
+  Landmark, HandCoins, ClipboardCheck, Users,
 } from 'lucide-react';
 import { Link, usePathname } from '@/i18n/navigation';
 import { cn } from '@/lib/utils/cn';
@@ -176,6 +176,13 @@ export function AppShell({
                 item={{ href: '/leader', labelKey: 'leader', icon: Landmark }}
                 active={isActive('/leader')}
                 label={t('leader')}
+              />
+            ) : null}
+            {civicRole === 'union_chairman' || civicRole === 'union_staff' ? (
+              <SidebarLink
+                item={{ href: '/beneficiaries', labelKey: 'beneficiaries', icon: Users }}
+                active={isActive('/beneficiaries')}
+                label={t('beneficiaries')}
               />
             ) : null}
             {isDonor ? (
