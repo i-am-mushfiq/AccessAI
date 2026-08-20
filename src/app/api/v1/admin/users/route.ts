@@ -6,13 +6,18 @@ import { users } from '@/lib/db/schema';
 import { ok, readJson, handle, fail, ERROR_CODES } from '@/lib/http/response';
 import { requireStaff, canManageUsers } from '@/lib/http/session';
 import { recordAudit } from '@/modules/admin/admin.service';
-import { ROLE_RANK, USER_ROLES } from '@/lib/domain/enums';
+import { ROLE_RANK, USER_ROLES, CIVIC_ROLES } from '@/lib/domain/enums';
 import { logoutEverywhere } from '@/modules/auth/auth.service';
 
 const patchSchema = z.object({
   userId: z.string().uuid(),
   role: z.enum(USER_ROLES).optional(),
   status: z.enum(['active', 'suspended']).optional(),
+  /** SJ-31–34. A separate axis from `role` — see modules/civic/roles.ts. */
+  civicRole: z.enum(CIVIC_ROLES).optional(),
+  civicUnionId: z.string().uuid().nullish(),
+  civicUpazila: z.string().trim().min(1).max(120).nullish(),
+  civicDistrict: z.string().trim().min(1).max(120).nullish(),
 });
 
 /**
@@ -49,6 +54,10 @@ export async function GET(request: NextRequest) {
         language: users.language,
         lastLoginAt: users.lastLoginAt,
         createdAt: users.createdAt,
+        civicRole: users.civicRole,
+        civicUnionId: users.civicUnionId,
+        civicUpazila: users.civicUpazila,
+        civicDistrict: users.civicDistrict,
       })
       .from(users)
       .where(
@@ -101,6 +110,15 @@ export async function PATCH(request: NextRequest) {
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.role) patch.role = body.role;
     if (body.status) patch.status = body.status;
+    if (body.civicRole) {
+      patch.civicRole = body.civicRole;
+      // Only the scope column that matches the new title is kept — assigning
+      // someone as an upazila officer must not leave a stale union/district
+      // behind that a later check could mistakenly read as still valid.
+      patch.civicUnionId = body.civicRole === 'union_chairman' || body.civicRole === 'union_staff' ? (body.civicUnionId ?? null) : null;
+      patch.civicUpazila = body.civicRole === 'upazila_officer' ? (body.civicUpazila ?? null) : null;
+      patch.civicDistrict = body.civicRole === 'zila_officer' ? (body.civicDistrict ?? null) : null;
+    }
 
     const [updated] = await db.update(users).set(patch).where(eq(users.id, body.userId)).returning();
 
@@ -116,12 +134,21 @@ export async function PATCH(request: NextRequest) {
       action: 'user.update',
       entityType: 'user',
       entityId: body.userId,
-      before: { role: target.role, status: target.status },
-      after: { role: updated!.role, status: updated!.status },
+      before: { role: target.role, status: target.status, civicRole: target.civicRole },
+      after: { role: updated!.role, status: updated!.status, civicRole: updated!.civicRole },
     });
 
     return ok({
-      user: { id: updated!.id, name: updated!.name, role: updated!.role, status: updated!.status },
+      user: {
+        id: updated!.id,
+        name: updated!.name,
+        role: updated!.role,
+        status: updated!.status,
+        civicRole: updated!.civicRole,
+        civicUnionId: updated!.civicUnionId,
+        civicUpazila: updated!.civicUpazila,
+        civicDistrict: updated!.civicDistrict,
+      },
       sessionsRevoked: Boolean(demoted || body.status === 'suspended'),
     });
   }, 'admin/users:patch');
