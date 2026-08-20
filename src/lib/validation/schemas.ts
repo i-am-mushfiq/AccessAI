@@ -4,6 +4,7 @@ import {
   GENDERS, MARITAL_STATUSES, EDUCATION_LEVELS, OCCUPATIONS, DISABILITY_TYPES,
   THEMES, NUMERAL_SYSTEMS, FEEDBACK_KINDS, LIFE_EVENTS, VERIFICATION_STATUSES,
   OPPORTUNITY_STATUSES, ORGANIZATION_TYPES, USER_ROLES, ISSUE_CATEGORIES, ISSUE_STATUSES,
+  CIVIC_ROLES, ENTITLEMENT_PERIODS, DISBURSEMENT_STATUSES,
 } from '@/lib/domain/enums';
 import { DISTRICT_CODES, DIVISIONS } from '@/lib/domain/geography';
 import { normalisePhone } from '@/lib/format/numerals';
@@ -385,6 +386,57 @@ export const updateIssueStatusSchema = z.object({
   status: z.enum(ISSUE_STATUSES),
   note: z.string().trim().max(1000).nullish(),
   resolutionPhotoUrl: z.string().trim().max(300).nullish(),
+});
+
+/* ----------------------------------------------------------------- civic */
+// Phase 3 — ledger & accountability.
+
+export const assignCivicRoleSchema = z
+  .object({
+    civicRole: z.enum(CIVIC_ROLES),
+    civicUnionId: z.string().uuid().nullish(),
+    civicUpazila: z.string().trim().min(1).max(120).nullish(),
+    civicDistrict: z.string().trim().min(1).max(120).nullish(),
+  })
+  .refine(
+    (v) => {
+      if (v.civicRole === 'union_chairman' || v.civicRole === 'union_staff') return Boolean(v.civicUnionId);
+      if (v.civicRole === 'upazila_officer') return Boolean(v.civicUpazila);
+      if (v.civicRole === 'zila_officer') return Boolean(v.civicDistrict);
+      return true; // 'none' needs no scope
+    },
+    { message: 'Choose the union, upazila, or district this role applies to.' },
+  );
+
+export const createAllocationSchema = z.object({
+  projectName: z.string().trim().min(3, 'Name the project.').max(200),
+  description: z.string().trim().min(8, 'Add a short description.').max(2000),
+  amount: z.coerce.number().positive('Enter an amount greater than zero.'),
+  allocationDate: z.coerce.date(),
+});
+
+export const flagAllocationSchema = z.object({
+  reason: z.string().trim().max(500).nullish(),
+});
+
+export const enrollBeneficiarySchema = z.object({
+  nidNumber: z.string().trim().min(9, "Enter the beneficiary's National ID number.").max(20),
+  programCode: z.string().trim().min(1).max(60),
+  programName: z.string().trim().min(1).max(160),
+  programNameBn: z.string().trim().min(1).max(160),
+  amount: z.coerce.number().positive('Enter an amount greater than zero.'),
+  period: z.enum(ENTITLEMENT_PERIODS),
+});
+
+export const recordDisbursementSchema = z.object({
+  amount: z.coerce.number().positive('Enter an amount greater than zero.'),
+  scheduledFor: z.coerce.date(),
+  status: z.enum(DISBURSEMENT_STATUSES),
+});
+
+export const resolveEscalationSchema = z.object({
+  status: z.enum(['acknowledged', 'resolved', 'dismissed']),
+  note: z.string().trim().max(1000).nullish(),
 });
 
 /** Query-string parser that tolerates repeated keys becoming arrays. */

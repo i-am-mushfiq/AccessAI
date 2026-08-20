@@ -8,7 +8,8 @@ import {
   EMBEDDING_STATUSES, REVIEW_STATUSES, FEEDBACK_KINDS, FEEDBACK_STATUSES, AI_ENGINES,
   AI_REQUEST_TYPES, THEMES, NUMERAL_SYSTEMS, LIFE_EVENTS, INTENTS,
   SERVICE_LOCATION_TYPES, NID_VERIFICATION_STATUSES, RESIDENCY_VERIFICATION_METHODS,
-  ISSUE_CATEGORIES, ISSUE_STATUSES,
+  ISSUE_CATEGORIES, ISSUE_STATUSES, CIVIC_ROLES, LEDGER_ENTITY_TYPES, ESCALATION_STATUSES,
+  BENEFICIARY_STATUSES, ENTITLEMENT_STATUSES, ENTITLEMENT_PERIODS, DISBURSEMENT_STATUSES,
 } from '../domain/enums';
 import type { RuleSet } from '../domain/rules';
 
@@ -46,10 +47,27 @@ export const users = sqliteTable(
     failedPinAttempts: integer('failed_pin_attempts').notNull().default(0),
     lockedUntil: integer('locked_until', { mode: 'timestamp_ms' }),
     lastLoginAt: integer('last_login_at', { mode: 'timestamp_ms' }),
+
+    /**
+     * Phase 3 civic titles (SJ-31–34). Orthogonal to `role`: a chairman is not
+     * a platform "moderator" and vice versa. Assigned by an administrator via
+     * /admin/civic-roles, never self-service. Exactly one of the three scope
+     * columns is meaningful for a given civicRole (union_* -> civicUnionId;
+     * upazila_officer -> civicUpazila; zila_officer -> civicDistrict).
+     */
+    civicRole: text('civic_role', { enum: CIVIC_ROLES }).notNull().default('none'),
+    civicUnionId: text('civic_union_id').references(() => unionBoundaries.id, { onDelete: 'set null' }),
+    civicUpazila: text('civic_upazila'),
+    civicDistrict: text('civic_district'),
+
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex('users_phone_uq').on(t.phone), index('users_role_idx').on(t.role)],
+  (t) => [
+    uniqueIndex('users_phone_uq').on(t.phone),
+    index('users_role_idx').on(t.role),
+    index('users_civic_idx').on(t.civicRole, t.civicUnionId),
+  ],
 );
 
 /**
@@ -751,6 +769,165 @@ export const issuesRelations = relations(issues, ({ one, many }) => ({
 }));
 
 /* ======================================================================
+   CIVIC — SHEBAR JANALA PHASE 3: LEDGER & ACCOUNTABILITY
+   ====================================================================== */
+
+/**
+ * The tamper-evident chain for financial records (SJ-13/SJ-14's BRD ERD
+ * "LedgerEntry"), kept deliberately separate from `audit_log`: this one
+ * anchors specifically budget allocations and disbursements, and nothing
+ * else ever writes to it. Same hash-chain discipline as `audit_log` — see
+ * modules/ledger/hash-chain.ts for the shared, tested implementation both
+ * use, and docs/DEVIATIONS.md for what "tamper-evident" does and does not
+ * mean here (a hash chain in one database, not a distributed ledger).
+ */
+export const ledgerEntries = sqliteTable(
+  'ledger_entries',
+  {
+    id: id(),
+    entityType: text('entity_type', { enum: LEDGER_ENTITY_TYPES }).notNull(),
+    entityId: text('entity_id').notNull(),
+    /** The exact fields hashed — kept alongside the hash so a verifier needs no other table. */
+    payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    prevHash: text('prev_hash').notNull(),
+    entryHash: text('entry_hash').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('ledger_entry_hash_uq').on(t.entryHash),
+    uniqueIndex('ledger_prev_hash_uq').on(t.prevHash),
+    index('ledger_entity_idx').on(t.entityType, t.entityId),
+  ],
+);
+
+/** SJ-12 — a chairman's (or union staff's) posted budget line item. */
+export const budgetAllocations = sqliteTable(
+  'budget_allocations',
+  {
+    id: id(),
+    unionId: text('union_id').notNull().references(() => unionBoundaries.id, { onDelete: 'restrict' }),
+    postedBy: text('posted_by').notNull().references(() => users.id, { onDelete: 'restrict' }),
+    projectName: text('project_name').notNull(),
+    description: text('description').notNull(),
+    /** In BDT. */
+    amount: real('amount').notNull(),
+    allocationDate: integer('allocation_date', { mode: 'timestamp_ms' }).notNull(),
+    /** Denormalised for cheap listing; the source of truth is `allocation_flags`. */
+    flagCount: integer('flag_count').notNull().default(0),
+    /** Set once, the first time the threshold is crossed — see escalations. */
+    escalated: integer('escalated', { mode: 'boolean' }).notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('allocations_union_idx').on(t.unionId, t.createdAt)],
+);
+
+/** SJ-16 — one flag per verified resident per allocation. */
+export const allocationFlags = sqliteTable(
+  'allocation_flags',
+  {
+    id: id(),
+    allocationId: text('allocation_id').notNull().references(() => budgetAllocations.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    reason: text('reason'),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('allocation_flags_uq').on(t.allocationId, t.userId)],
+);
+
+/**
+ * SJ-17/18 — the record of one threshold breach, and whether the officer it
+ * reached has acted on it. `upazilaOfficerId` is nullable on purpose: if no
+ * officer is yet assigned to the union's upazila, the escalation is still
+ * recorded — honestly unassigned — rather than silently dropped.
+ */
+export const escalations = sqliteTable(
+  'escalations',
+  {
+    id: id(),
+    allocationId: text('allocation_id').notNull().references(() => budgetAllocations.id, { onDelete: 'cascade' }),
+    upazilaOfficerId: text('upazila_officer_id').references(() => users.id, { onDelete: 'set null' }),
+    flagCount: integer('flag_count').notNull(),
+    verifiedResidentCount: integer('verified_resident_count').notNull(),
+    ratio: real('ratio').notNull(),
+    status: text('status', { enum: ESCALATION_STATUSES }).notNull().default('pending'),
+    note: text('note'),
+    createdAt: createdAt(),
+    resolvedAt: integer('resolved_at', { mode: 'timestamp_ms' }),
+  },
+  // One escalation per allocation — a rising ratio does not re-notify.
+  (t) => [uniqueIndex('escalations_allocation_uq').on(t.allocationId), index('escalations_officer_idx').on(t.upazilaOfficerId, t.status)],
+);
+
+/**
+ * SJ-14/15 — the BRD's ERD, adapted: a beneficiary is identified by NID
+ * hash (never the raw number), so `checkMyEntitlementStatus` can match a
+ * citizen to their own enrolment without a second identity system. `userId`
+ * is nullable because a beneficiary can be enrolled before they ever create
+ * an AccessAI account.
+ */
+export const beneficiaries = sqliteTable(
+  'beneficiaries',
+  {
+    id: id(),
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    nidHash: text('nid_hash').notNull(),
+    unionId: text('union_id').notNull().references(() => unionBoundaries.id, { onDelete: 'restrict' }),
+    programCode: text('program_code').notNull(),
+    programName: text('program_name').notNull(),
+    programNameBn: text('program_name_bn').notNull(),
+    status: text('status', { enum: BENEFICIARY_STATUSES }).notNull().default('active'),
+    enrolledBy: text('enrolled_by').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('beneficiaries_nid_idx').on(t.nidHash), index('beneficiaries_union_idx').on(t.unionId)],
+);
+
+export const entitlements = sqliteTable(
+  'entitlements',
+  {
+    id: id(),
+    beneficiaryId: text('beneficiary_id').notNull().references(() => beneficiaries.id, { onDelete: 'cascade' }),
+    amount: real('amount').notNull(),
+    period: text('period', { enum: ENTITLEMENT_PERIODS }).notNull(),
+    status: text('status', { enum: ENTITLEMENT_STATUSES }).notNull().default('active'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('entitlements_beneficiary_idx').on(t.beneficiaryId)],
+);
+
+/** Anchored into `ledger_entries` on every insert — this is the disbursement half of SJ-14's ERD. */
+export const disbursements = sqliteTable(
+  'disbursements',
+  {
+    id: id(),
+    entitlementId: text('entitlement_id').notNull().references(() => entitlements.id, { onDelete: 'cascade' }),
+    amount: real('amount').notNull(),
+    scheduledFor: integer('scheduled_for', { mode: 'timestamp_ms' }).notNull(),
+    paidAt: integer('paid_at', { mode: 'timestamp_ms' }),
+    status: text('status', { enum: DISBURSEMENT_STATUSES }).notNull().default('scheduled'),
+    recordedBy: text('recorded_by').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('disbursements_entitlement_idx').on(t.entitlementId)],
+);
+
+export const budgetAllocationsRelations = relations(budgetAllocations, ({ one, many }) => ({
+  union: one(unionBoundaries, { fields: [budgetAllocations.unionId], references: [unionBoundaries.id] }),
+  poster: one(users, { fields: [budgetAllocations.postedBy], references: [users.id] }),
+  flags: many(allocationFlags),
+}));
+
+export const beneficiariesRelations = relations(beneficiaries, ({ many }) => ({
+  entitlements: many(entitlements),
+}));
+
+export const entitlementsRelations = relations(entitlements, ({ one, many }) => ({
+  beneficiary: one(beneficiaries, { fields: [entitlements.beneficiaryId], references: [beneficiaries.id] }),
+  disbursements: many(disbursements),
+}));
+
+/* ======================================================================
    AI OPERATIONS & GOVERNANCE
    ====================================================================== */
 
@@ -848,7 +1025,17 @@ export const knowledgeReviews = sqliteTable(
   (t) => [index('reviews_status_idx').on(t.status), index('reviews_entity_idx').on(t.entityType, t.entityId)],
 );
 
-/** PRD §121 — "Log administrative actions." Append-only. */
+/**
+ * PRD §121 — "Log administrative actions." Append-only, and since Phase 3
+ * (SJ-13) genuinely tamper-evident: `entryHash` folds in `prevHash`, so
+ * altering a stored row's contents after the fact makes it stop matching its
+ * own hash, and altering `prevHash` breaks the link to the row before it —
+ * either way `verifyAuditChain()` (modules/admin/admin.service.ts) detects
+ * exactly where. Rows written before this column existed have a null hash
+ * and are outside the chain; the chain begins at the first row written after
+ * this migration. See docs/DEVIATIONS.md for the single-writer caveat this
+ * accepts.
+ */
 export const auditLog = sqliteTable(
   'audit_log',
   {
@@ -862,9 +1049,17 @@ export const auditLog = sqliteTable(
     after: text('after', { mode: 'json' }).$type<Record<string, unknown>>(),
     ip: text('ip'),
     userAgent: text('user_agent'),
+    /** Hash of the previous chained row, or the GENESIS constant for the first. */
+    prevHash: text('prev_hash'),
+    /** sha256(prevHash + stable-serialised payload). Recomputable, never edited. */
+    entryHash: text('entry_hash'),
     createdAt: createdAt(),
   },
-  (t) => [index('audit_created_idx').on(t.createdAt), index('audit_entity_idx').on(t.entityType, t.entityId)],
+  (t) => [
+    index('audit_created_idx').on(t.createdAt),
+    index('audit_entity_idx').on(t.entityType, t.entityId),
+    uniqueIndex('audit_prev_hash_uq').on(t.prevHash),
+  ],
 );
 
 export const searchQueries = sqliteTable(
@@ -1027,5 +1222,12 @@ export type Issue = typeof issues.$inferSelect;
 export type NewIssue = typeof issues.$inferInsert;
 export type IssueVote = typeof issueVotes.$inferSelect;
 export type IssueStatusHistoryRow = typeof issueStatusHistory.$inferSelect;
+export type LedgerEntry = typeof ledgerEntries.$inferSelect;
+export type BudgetAllocation = typeof budgetAllocations.$inferSelect;
+export type AllocationFlag = typeof allocationFlags.$inferSelect;
+export type Escalation = typeof escalations.$inferSelect;
+export type Beneficiary = typeof beneficiaries.$inferSelect;
+export type Entitlement = typeof entitlements.$inferSelect;
+export type Disbursement = typeof disbursements.$inferSelect;
 
 export { sql };

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql, count, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, sql, count, inArray } from 'drizzle-orm';
 import { db } from '@/lib/db/client';
 import {
   opportunities, organizations, documents, documentChunks, aiLogs, feedback,
@@ -11,6 +11,7 @@ import { addDays } from '@/lib/format/dates';
 import { describeAiMode } from '@/modules/ai/providers';
 import { hasEmbeddingProvider } from '@/lib/config/env';
 import type { UserRole } from '@/lib/domain/enums';
+import { GENESIS_HASH, computeEntryHash, verifyChain, type ChainVerificationResult } from '@/modules/ledger/hash-chain';
 
 /**
  * Administrative operations: analytics, system health, and the background jobs
@@ -479,6 +480,10 @@ export async function listAuditLog(limit = 100, entityType?: string) {
     .limit(limit);
 }
 
+/**
+ * SJ-13 — every row folds in the previous one's hash (modules/ledger/hash-chain.ts).
+ * Same single-writer caveat as the financial ledger: see docs/DEVIATIONS.md.
+ */
 export async function recordAudit(input: {
   actorId: string;
   actorRole: UserRole;
@@ -488,7 +493,10 @@ export async function recordAudit(input: {
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
 }) {
-  await db.insert(auditLog).values({
+  const [last] = await db.select({ entryHash: auditLog.entryHash }).from(auditLog).orderBy(desc(auditLog.createdAt)).limit(1);
+  const prevHash = last?.entryHash ?? GENESIS_HASH;
+
+  const payload = {
     actorId: input.actorId,
     actorRole: input.actorRole,
     action: input.action,
@@ -496,5 +504,22 @@ export async function recordAudit(input: {
     entityId: input.entityId ?? null,
     before: input.before ?? null,
     after: input.after ?? null,
-  });
+  };
+  const entryHash = computeEntryHash(prevHash, payload);
+
+  await db.insert(auditLog).values({ ...payload, prevHash, entryHash });
+}
+
+/** Walks every hash-chained row (skipping pre-migration rows with no hash) and reports whether it is intact. */
+export async function verifyAuditChain(): Promise<ChainVerificationResult> {
+  const rows = await db.select().from(auditLog).orderBy(asc(auditLog.createdAt));
+  return verifyChain(rows, (row) => ({
+    actorId: row.actorId,
+    actorRole: row.actorRole,
+    action: row.action,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    before: row.before,
+    after: row.after,
+  }));
 }

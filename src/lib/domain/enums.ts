@@ -420,3 +420,40 @@ export const ISSUE_STATUSES = [
   'archived',
 ] as const;
 export type IssueStatus = (typeof ISSUE_STATUSES)[number];
+
+/* -------------------------------------------------- civic: Phase 3 roles */
+// SJ-31–34. Deliberately NOT folded into USER_ROLES/ROLE_RANK: a chairman is
+// not "above" or "below" a moderator, they hold an unrelated capability over
+// a specific union. CIVIC_ROLE_RANK exists only to order the four civic
+// titles by nominal seniority for display — authorisation is scope-based
+// (does this user hold this title for THIS union/upazila/district), never a
+// bare rank comparison. See modules/civic/roles.ts.
+export const CIVIC_ROLES = ['none', 'union_staff', 'union_chairman', 'upazila_officer', 'zila_officer'] as const;
+export type CivicRole = (typeof CIVIC_ROLES)[number];
+
+export const CIVIC_ROLE_RANK: Record<CivicRole, number> = {
+  none: 0,
+  union_staff: 1,
+  union_chairman: 2,
+  upazila_officer: 3,
+  zila_officer: 4,
+};
+
+/* --------------------------------------------- civic: Phase 3 ledger */
+export const LEDGER_ENTITY_TYPES = ['budget_allocation', 'disbursement'] as const;
+export type LedgerEntityType = (typeof LEDGER_ENTITY_TYPES)[number];
+
+export const ESCALATION_STATUSES = ['pending', 'acknowledged', 'resolved', 'dismissed'] as const;
+export type EscalationStatus = (typeof ESCALATION_STATUSES)[number];
+
+export const BENEFICIARY_STATUSES = ['active', 'suspended', 'inactive'] as const;
+export type BeneficiaryStatus = (typeof BENEFICIARY_STATUSES)[number];
+
+export const ENTITLEMENT_STATUSES = ['active', 'suspended', 'completed'] as const;
+export type EntitlementStatus = (typeof ENTITLEMENT_STATUSES)[number];
+
+export const ENTITLEMENT_PERIODS = ['monthly', 'quarterly', 'one_time'] as const;
+export type EntitlementPeriod = (typeof ENTITLEMENT_PERIODS)[number];
+
+export const DISBURSEMENT_STATUSES = ['scheduled', 'paid', 'failed', 'on_hold'] as const;
+export type DisbursementStatus = (typeof DISBURSEMENT_STATUSES)[number];

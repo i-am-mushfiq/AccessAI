@@ -6,9 +6,11 @@ import {
   SEED_ORGANIZATIONS, SEED_OPPORTUNITIES, SEED_LIFE_EVENTS, SEED_LOCATIONS, SEED_UNIONS,
   validateSeedCorpus, SEED_STATS,
 } from '../src/lib/db/seed';
-import { hashSecret } from '../src/lib/security/hash';
+import { hashSecret, fastHash } from '../src/lib/security/hash';
 import { chunkText, termFrequencies, estimateTokens } from '../src/modules/knowledge/tokenizer';
 import { addDays } from '../src/lib/format/dates';
+import { createAllocation, flagAllocation } from '../src/modules/budget/budget.service';
+import { enrollBeneficiary, recordDisbursement } from '../src/modules/entitlements/entitlement.service';
 
 /**
  * Seeds the knowledge base, the retrieval index, and demo accounts.
@@ -22,6 +24,9 @@ import { addDays } from '../src/lib/format/dates';
 const RESET_USERS = process.argv.includes('--reset-users');
 
 const now = new Date();
+
+/** Rahima's demo NID — invented for this seed, hashed the same way modules/identity/nid.service.ts does, so her own account and her beneficiary enrolment resolve to the same hash. */
+const RAHIMA_DEMO_NID = '1234567890';
 
 async function main() {
   console.log('AccessAI — seeding knowledge base\n');
@@ -58,6 +63,16 @@ async function main() {
     await db.delete(s.conversations);
     await db.delete(s.aiLogs);
     await db.delete(s.feedback);
+    // Phase 3 — cleared explicitly, before `users`: `budget_allocations.posted_by`
+    // is ON DELETE RESTRICT (a chairman's financial records must not silently
+    // vanish via an unrelated user cleanup), so it has to go first, not cascade.
+    await db.delete(s.allocationFlags);
+    await db.delete(s.escalations);
+    await db.delete(s.budgetAllocations);
+    await db.delete(s.disbursements);
+    await db.delete(s.entitlements);
+    await db.delete(s.beneficiaries);
+    await db.delete(s.ledgerEntries);
     await db.delete(s.sessions);
     await db.delete(s.otpChallenges);
     await db.delete(s.userSettings);
@@ -384,6 +399,7 @@ async function main() {
           // Pre-verified so the demo can show issue reporting/voting without
           // first walking through Phase 1 — one account demonstrates the
           // "already verified" state, the others still show the real flow.
+          nidNumberHash: fastHash(`nid:${RAHIMA_DEMO_NID}`),
           nidVerificationStatus: 'simulated_verified' as const,
           nidVerifiedAt: now,
           residencyUnionId: unionIds.get('rangpur-sadar-kaligonj') ?? null,
@@ -418,6 +434,55 @@ async function main() {
         },
       },
       {
+        // A second verified Kaligonj resident, purely so the escalation demo
+        // below has two distinct flaggers rather than one account doing
+        // everything — ESCALATION_MIN_FLAGS is 2 for exactly this reason.
+        phone: '01711112222', name: 'মিনা আক্তার', role: 'citizen' as const, district: 'rangpur',
+        pinHash, language: 'bn' as const,
+        profile: {
+          statedAge: 34, gender: 'female' as const, maritalStatus: 'married' as const,
+          occupation: 'homemaker' as const, monthlyIncome: 5000, education: 'ssc' as const,
+          district: 'rangpur', division: 'rangpur', householdSize: 4, dependents: 2,
+          hasNid: true, hasBankAccount: true, citizenship: 'bangladeshi',
+          isStudent: false, hasDisability: false,
+          nidVerificationStatus: 'simulated_verified' as const,
+          nidVerifiedAt: now,
+          residencyUnionId: unionIds.get('rangpur-sadar-kaligonj') ?? null,
+          residencyVerificationMethod: 'gps_geofence' as const,
+          residencyVerifiedAt: now,
+        },
+      },
+      {
+        // Phase 3 — SJ-31: Union Parishad Chairman of Kaligonj. Verified
+        // identity and residency the same way any citizen would be (Phase 1
+        // is a real dependency, not a formality) — a chairman is also a
+        // resident of the union they chair.
+        phone: '01911112222', name: 'মোঃ জসিম উদ্দিন', role: 'citizen' as const, district: 'rangpur',
+        pinHash, language: 'bn' as const,
+        civicRole: 'union_chairman' as const,
+        civicUnionId: unionIds.get('rangpur-sadar-kaligonj') ?? null,
+        profile: {
+          statedAge: 52, gender: 'male' as const, maritalStatus: 'married' as const,
+          occupation: 'other' as const, district: 'rangpur', division: 'rangpur',
+          hasNid: true, citizenship: 'bangladeshi',
+          nidVerificationStatus: 'simulated_verified' as const,
+          nidVerifiedAt: now,
+          residencyUnionId: unionIds.get('rangpur-sadar-kaligonj') ?? null,
+          residencyVerificationMethod: 'manual_attestation' as const,
+          residencyVerifiedAt: now,
+        },
+      },
+      {
+        // SJ-33: Upazila Officer over Rangpur Sadar — the upazila Kaligonj
+        // union belongs to. Not itself a citizen profile; officers act on
+        // their civic title, not an eligibility profile.
+        phone: '01611112222', name: 'নাজমা সুলতানা', role: 'citizen' as const, district: 'rangpur',
+        pinHash, language: 'bn' as const,
+        civicRole: 'upazila_officer' as const,
+        civicUpazila: 'Rangpur Sadar',
+        profile: null,
+      },
+      {
         phone: '01612345678', name: 'AccessAI Moderator', role: 'moderator' as const,
         district: 'dhaka', pinHash: adminPinHash, language: 'en' as const, profile: null,
       },
@@ -428,9 +493,15 @@ async function main() {
     ];
 
     let rahimaId: string | null = null;
+    let minaId: string | null = null;
+    let chairmanId: string | null = null;
+    let upazilaOfficerId: string | null = null;
     for (const d of demo) {
       const userId = crypto.randomUUID();
       if (d.phone === '01712345678') rahimaId = userId;
+      if (d.phone === '01711112222') minaId = userId;
+      if (d.phone === '01911112222') chairmanId = userId;
+      if (d.phone === '01611112222') upazilaOfficerId = userId;
       await db.insert(s.users).values({
         id: userId,
         phone: d.phone,
@@ -441,6 +512,9 @@ async function main() {
         district: d.district,
         pinHash: d.pinHash,
         phoneVerifiedAt: now,
+        civicRole: 'civicRole' in d ? d.civicRole : 'none',
+        civicUnionId: 'civicUnionId' in d ? d.civicUnionId : null,
+        civicUpazila: 'civicUpazila' in d ? d.civicUpazila : null,
       });
       await db.insert(s.userSettings).values({ userId, theme: 'light', textScale: 1, numeralSystem: 'latin' });
       if (d.profile) {
@@ -495,6 +569,77 @@ async function main() {
         changedBy: rahimaId,
       });
     }
+
+    // ---- Phase 3: budget allocations, an escalated flag, and a real entitlement ----
+    // Goes through the actual service functions (not raw inserts) so the
+    // demo data is produced by exactly the code path a real chairman/citizen
+    // would exercise — ledger entries, flag ratios, and escalation all real.
+    if (rahimaId && minaId && chairmanId && kaligonjId) {
+      console.log('  budget allocations, ledger, and entitlements…');
+
+      const roadAllocation = await createAllocation({
+        unionId: kaligonjId,
+        postedBy: chairmanId,
+        projectName: 'Kaligonj Bazar Road Repair',
+        description: 'Resurfacing 600 metres of the market road damaged by monsoon flooding.',
+        amount: 850_000,
+        allocationDate: addDays(now, -20),
+      });
+
+      const suspectAllocation = await createAllocation({
+        unionId: kaligonjId,
+        postedBy: chairmanId,
+        projectName: 'Union Office Renovation',
+        description: 'Repainting and furniture replacement for the union parishad office.',
+        amount: 1_200_000,
+        allocationDate: addDays(now, -10),
+      });
+
+      await createAllocation({
+        unionId: kaligonjId,
+        postedBy: chairmanId,
+        projectName: 'Community Tube Well Installation',
+        description: 'Three new deep tube wells at the ward boundaries with the poorest water access.',
+        amount: 450_000,
+        allocationDate: addDays(now, -3),
+      });
+
+      // Two of Kaligonj's two verified residents flag the renovation project —
+      // 2 of 2 is a 100% ratio, clearing both ESCALATION_MIN_FLAGS and
+      // ESCALATION_THRESHOLD_RATIO, so this seeds a real, already-escalated
+      // record rather than one waiting for a live flag to demonstrate it.
+      await flagAllocation(suspectAllocation.id, rahimaId, 'The office looked freshly painted last year — this seems duplicated.');
+      await flagAllocation(suspectAllocation.id, minaId, 'No public notice board announcement was posted for this one.');
+
+      // Rahima's own demo NID (same hash as her verified profile above) is
+      // enrolled as a real beneficiary — this is what makes SJ-15's
+      // entitlement-status check return something real when SHE signs in,
+      // instead of "not enrolled" on the account demonstrating it.
+      const enrollment = await enrollBeneficiary({
+        nidNumber: RAHIMA_DEMO_NID,
+        unionId: kaligonjId,
+        programCode: 'widow-allowance',
+        programName: 'Widow Allowance',
+        programNameBn: 'বিধবা ভাতা',
+        enrolledBy: chairmanId,
+        amount: 650,
+        period: 'monthly',
+      });
+      await recordDisbursement({
+        entitlementId: enrollment.entitlement.id,
+        amount: 650,
+        scheduledFor: addDays(now, -30),
+        status: 'paid',
+        recordedBy: chairmanId,
+      });
+      await recordDisbursement({
+        entitlementId: enrollment.entitlement.id,
+        amount: 650,
+        scheduledFor: now,
+        status: 'scheduled',
+        recordedBy: chairmanId,
+      });
+    }
   } else {
     console.log('  demo accounts already present (pass --reset-users to recreate)');
   }
@@ -506,19 +651,30 @@ async function main() {
   const [edgeCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.knowledgeGraphEdges);
   const [unionCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.unionBoundaries);
   const [issueCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.issues);
+  const [allocationCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.budgetAllocations);
+  const [escalationCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.escalations);
+  const [beneficiaryCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.beneficiaries);
+  const [ledgerCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.ledgerEntries);
 
   console.log('\nSeed complete:');
   console.log(`  union boundaries    ${unionCount?.n ?? 0}`);
   console.log(`  issue reports       ${issueCount?.n ?? 0}`);
+  console.log(`  budget allocations  ${allocationCount?.n ?? 0}`);
+  console.log(`  escalations         ${escalationCount?.n ?? 0}`);
+  console.log(`  beneficiaries       ${beneficiaryCount?.n ?? 0}`);
+  console.log(`  ledger entries      ${ledgerCount?.n ?? 0}`);
   console.log(`  organisations       ${orgCount?.n ?? 0}`);
   console.log(`  programmes          ${oppCount?.n ?? 0}`);
   console.log(`  retrieval chunks    ${chunkCount}`);
   console.log(`  service locations   ${locCount?.n ?? 0}`);
   console.log(`  graph edges         ${edgeCount?.n ?? 0}`);
   console.log('\nDemo sign-in (phone + PIN):');
-  console.log('  01712345678 / 1234  — Rahima Begum, widow, Rangpur (bn)');
+  console.log('  01712345678 / 1234  — Rahima Begum, widow, Rangpur (bn) — beneficiary + verified');
   console.log('  01812345678 / 1234  — Tanvir Ahmed, student, Rajshahi (en)');
   console.log('  01912345678 / 1234  — Karim Mia, farmer, Kurigram (bn)');
+  console.log('  01711112222 / 1234  — Mina Aktar, Kaligonj resident (bn)');
+  console.log('  01911112222 / 1234  — Md. Jashim Uddin, Kaligonj chairman (bn)');
+  console.log('  01611112222 / 1234  — Nazma Sultana, Rangpur Sadar upazila officer (bn)');
   console.log('  01612345678 / 4321  — Moderator');
   console.log('  01512345678 / 4321  — Administrator');
   console.log('\nEvery programme is flagged "unverified_sample". See docs/DEVIATIONS.md §2.\n');
