@@ -59,8 +59,10 @@ export interface AppShellProps {
   readonly children: ReactNode;
   readonly userName: string;
   readonly userRole: UserRole;
-  /** Phase 3 civic title (SJ-31–34) — governs the "Officer" link only. */
+  /** Phase 3 civic title (SJ-31–34) — governs the "Officer" and "Leader" links. */
   readonly civicRole?: CivicRole;
+  /** SJ-27 — true when this account represents a donor organisation. */
+  readonly isDonor?: boolean;
   readonly unreadCount?: number;
   /** Page title for the mobile app bar. */
   readonly title?: string;
@@ -73,6 +75,7 @@ export function AppShell({
   userName,
   userRole,
   civicRole = 'none',
+  isDonor = false,
   unreadCount = 0,
   title,
   hideBottomNav = false,
@@ -166,6 +169,20 @@ export function AppShell({
                 item={{ href: '/officer', labelKey: 'officer', icon: ClipboardCheck }}
                 active={isActive('/officer')}
                 label={t('officer')}
+              />
+            ) : null}
+            {civicRole !== 'none' ? (
+              <SidebarLink
+                item={{ href: '/leader', labelKey: 'leader', icon: Landmark }}
+                active={isActive('/leader')}
+                label={t('leader')}
+              />
+            ) : null}
+            {isDonor ? (
+              <SidebarLink
+                item={{ href: '/donor', labelKey: 'donor', icon: HandCoins }}
+                active={isActive('/donor')}
+                label={t('donor')}
               />
             ) : null}
             {isStaff ? (

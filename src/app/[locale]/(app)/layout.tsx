@@ -46,6 +46,7 @@ export default async function AppLayout({
         userName={session.user.name}
         userRole={session.user.role}
         civicRole={session.user.civicRole}
+        isDonor={Boolean(session.user.donorOrgId)}
         unreadCount={unread}
       >
         {children}

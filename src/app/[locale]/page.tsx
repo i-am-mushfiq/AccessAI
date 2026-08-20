@@ -59,6 +59,7 @@ export default async function LandingPage({ params }: { params: Promise<{ locale
 
   const t = await getTranslations('landing');
   const tc = await getTranslations('common');
+  const tTransparency = await getTranslations('transparency');
 
   const [events, categoryCounts, session] = await Promise.all([
     db
@@ -297,6 +298,12 @@ export default async function LandingPage({ params }: { params: Promise<{ locale
                 {t(key)}
               </Link>
             ))}
+            <Link
+              href="/transparency"
+              className="type-body-md inline-flex min-h-12 items-center text-text-link underline focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
+            >
+              {tTransparency('title')}
+            </Link>
           </nav>
           <p className="type-caption text-text-tertiary measure">{t('demoNotice')}</p>
         </div>
