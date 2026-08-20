@@ -100,6 +100,24 @@ const schema = z.object({
   SMS_PROVIDER: optionalStr,
   SMS_API_KEY: optionalStr,
   SMS_SENDER_ID: optionalStr,
+  /** SSL Wireless needs a second credential (a "SID") beyond the API key. */
+  SMS_SID: optionalStr,
+
+  /**
+   * SJ-23/48 — shared secret an inbound USSD aggregator must present (as an
+   * `X-Ussd-Secret` header) for its callback to be accepted. Without it any
+   * caller could drive citizen-facing USSD menus.
+   */
+  USSD_GATEWAY_SECRET: optionalStr,
+
+  /**
+   * SJ-44 — AES-256-GCM key for field-level encryption at rest (currently
+   * `userProfiles.medicalConditions` only — see docs/DEVIATIONS.md §18).
+   * Base64-encoded, must decode to exactly 32 bytes. Unset in development:
+   * a fixed, clearly-labelled fallback key is derived so a fresh clone still
+   * runs, but `assertProductionSafety()` refuses to boot production on it.
+   */
+  FIELD_ENCRYPTION_KEY: optionalStr,
 
   /**
    * National ID verification, OPTIONAL. Named the same way `SMS_PROVIDER` is:
@@ -173,6 +191,17 @@ const schema = z.object({
   TTS_BASE_URL: nonEmpty.default('https://api.openai.com/v1'),
   TTS_MODEL: nonEmpty.default('tts-1'),
   TTS_VOICE: nonEmpty.default('alloy'),
+
+  /**
+   * SJ-21 — vision-based photo moderation, OPTIONAL, same seam pattern as
+   * STT/TTS: an OpenAI-compatible `/chat/completions` endpoint whose model
+   * accepts an image content part. Without a key, an uploaded issue photo is
+   * marked `unavailable` and routed to human review rather than either
+   * silently passing or inventing a verdict — see modules/issues/vision-moderation.ts.
+   */
+  VISION_MODERATION_API_KEY: optionalStr,
+  VISION_MODERATION_BASE_URL: nonEmpty.default('https://api.openai.com/v1'),
+  VISION_MODERATION_MODEL: nonEmpty.default('gpt-4o-mini'),
 
   GOOGLE_MAPS_API_KEY: optionalStr,
   NEXT_PUBLIC_MAPBOX_TOKEN: optionalStr,
@@ -308,5 +337,8 @@ export function assertProductionSafety(): string[] {
   if (env.JWT_REFRESH_SECRET.startsWith('dev-only')) problems.push('JWT_REFRESH_SECRET is still the shipped development value.');
   if (env.JWT_SECRET.length < 32) problems.push('JWT_SECRET must be at least 32 characters.');
   if (env.OTP_DEV_ECHO) problems.push('OTP_DEV_ECHO must be false in production — it reveals OTPs to the client.');
+  if (!env.FIELD_ENCRYPTION_KEY) {
+    problems.push('FIELD_ENCRYPTION_KEY is not set — health data would be encrypted with the shipped development key.');
+  }
   return problems;
 }

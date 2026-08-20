@@ -40,19 +40,14 @@ export interface EntitlementStatusResult {
   }[];
 }
 
-/** Matched by the SAME hash Phase 1's NID verification produces — never the raw number. */
-export async function checkMyEntitlementStatus(userId: string): Promise<EntitlementStatusResult> {
-  const [profile] = await db
-    .select({ nidHash: userProfiles.nidNumberHash, nidStatus: userProfiles.nidVerificationStatus })
-    .from(userProfiles)
-    .where(eq(userProfiles.userId, userId))
-    .limit(1);
-
-  if (!profile?.nidHash || (profile.nidStatus !== 'simulated_verified' && profile.nidStatus !== 'verified')) {
-    return { enrolled: false, reason: 'nid_not_verified' };
-  }
-
-  const [beneficiary] = await db.select().from(beneficiaries).where(eq(beneficiaries.nidHash, profile.nidHash)).limit(1);
+/**
+ * Shared by both `checkMyEntitlementStatus` (a logged-in citizen, looked up
+ * by their own verified NID hash) and `checkEntitlementStatusByNid` (SJ-23's
+ * USSD path, which has no account or session — only whatever NID the caller
+ * keys in).
+ */
+async function statusForNidHash(nidHash: string): Promise<EntitlementStatusResult> {
+  const [beneficiary] = await db.select().from(beneficiaries).where(eq(beneficiaries.nidHash, nidHash)).limit(1);
   if (!beneficiary) return { enrolled: false, reason: 'not_enrolled' };
 
   const entitlementRows = await db
@@ -94,6 +89,32 @@ export async function checkMyEntitlementStatus(userId: string): Promise<Entitlem
     },
     entitlements: withDisbursements,
   };
+}
+
+/** Matched by the SAME hash Phase 1's NID verification produces — never the raw number. */
+export async function checkMyEntitlementStatus(userId: string): Promise<EntitlementStatusResult> {
+  const [profile] = await db
+    .select({ nidHash: userProfiles.nidNumberHash, nidStatus: userProfiles.nidVerificationStatus })
+    .from(userProfiles)
+    .where(eq(userProfiles.userId, userId))
+    .limit(1);
+
+  if (!profile?.nidHash || (profile.nidStatus !== 'simulated_verified' && profile.nidStatus !== 'verified')) {
+    return { enrolled: false, reason: 'nid_not_verified' };
+  }
+
+  return statusForNidHash(profile.nidHash);
+}
+
+/**
+ * SJ-23 — the USSD path. A caller with no AccessAI account keys in their own
+ * NID; this hashes it with the exact same function `enrollBeneficiary` and
+ * NID verification use, so it matches a beneficiary record regardless of
+ * whether that person ever created an account.
+ */
+export async function checkEntitlementStatusByNid(rawNid: string): Promise<EntitlementStatusResult> {
+  const nidHash = fastHash(`nid:${normaliseNidNumber(rawNid)}`);
+  return statusForNidHash(nidHash);
 }
 
 export interface EnrollBeneficiaryInput {

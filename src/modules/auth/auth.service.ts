@@ -5,6 +5,8 @@ import { hashSecret, verifySecret, fastHash, randomToken, randomNumericCode } fr
 import { signAccessToken, signRefreshToken, verifyRefreshToken, REFRESH_TTL_SECONDS } from '@/lib/security/tokens';
 import { normalisePhone } from '@/lib/format/numerals';
 import { env } from '@/lib/config/env';
+import { dispatchSms, SmsDeliveryError } from '@/modules/notifications/sms.service';
+import { recordAudit } from '@/modules/admin/admin.service';
 import type { UserRole } from '@/lib/domain/enums';
 
 /**
@@ -139,24 +141,20 @@ export async function requestOtp(rawPhone: string, purpose: OtpPurpose): Promise
 }
 
 /**
- * SMS delivery. With no provider configured this THROWS rather than silently
- * pretending to send — a citizen waiting for a code that was never sent is
- * worse than a clear failure.
+ * SMS delivery via modules/notifications/sms.service.ts. With no provider
+ * configured, or if the configured one rejects the message, this THROWS
+ * rather than silently pretending to send — a citizen waiting for a code
+ * that was never sent is worse than a clear failure.
  */
 async function sendSms(phone: string, code: string): Promise<void> {
-  if (!env.SMS_PROVIDER || !env.SMS_API_KEY) {
-    throw new AuthError(
-      'INTERNAL',
-      'SMS delivery is not configured on this server, so a code cannot be sent.',
-      { phone, hint: 'Set SMS_PROVIDER and SMS_API_KEY, or enable OTP_DEV_ECHO for development.' },
-    );
+  try {
+    await dispatchSms(phone, `Your AccessAI verification code is ${code}. It expires in 5 minutes.`);
+  } catch (error) {
+    if (error instanceof SmsDeliveryError) {
+      throw new AuthError('INTERNAL', error.message, { phone, ...error.detail });
+    }
+    throw error;
   }
-  // Provider integration goes here — see docs/EXTERNAL.md for the shapes of
-  // SSL Wireless, BulkSMSBD, and Twilio. Deliberately not stubbed silently.
-  throw new AuthError('INTERNAL', `SMS provider "${env.SMS_PROVIDER}" is not implemented in this build.`, {
-    phone,
-    codeLength: code.length,
-  });
 }
 
 export async function verifyOtp(rawPhone: string, code: string, purpose: OtpPurpose): Promise<true> {
@@ -565,6 +563,13 @@ export async function deleteAccount(userId: string): Promise<void> {
 
 /* --------------------------------------------------------------- audit */
 
+/**
+ * Login/logout/registration events used to be inserted here directly, with
+ * no hash chain — a real gap, since `auth.login` is the single highest-
+ * volume action in `audit_log` and none of it was tamper-evident. Delegating
+ * to `recordAudit()` closes that gap: every audit row, from every module,
+ * now goes through the one chained write path (SJ-13/41).
+ */
 async function audit(
   actorId: string | null,
   actorRole: UserRole | null,
@@ -574,15 +579,7 @@ async function audit(
   ip?: string,
   userAgent?: string,
 ): Promise<void> {
-  await db.insert(auditLog).values({
-    actorId,
-    actorRole,
-    action,
-    entityType,
-    entityId,
-    ip: ip ?? null,
-    userAgent: userAgent ?? null,
-  });
+  await recordAudit({ actorId, actorRole, action, entityType, entityId, ip, userAgent });
 }
 
 /** Housekeeping for the daily job: drop consumed and expired OTP rows. */
