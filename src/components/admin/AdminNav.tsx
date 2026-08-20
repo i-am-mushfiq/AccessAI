@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { LayoutDashboard, Database, Building2, Scale, MessageSquareWarning, Cpu, Users, Landmark, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Database, Building2, Scale, MessageSquareWarning, Cpu, Users, Landmark, ShieldCheck, MessageSquare } from 'lucide-react';
 import { Link, usePathname } from '@/i18n/navigation';
 import { cn } from '@/lib/utils/cn';
 
@@ -22,6 +22,7 @@ const ITEMS = [
   { href: '/admin/users', key: 'users', icon: Users },
   { href: '/admin/civic-roles', key: 'civicRoles', icon: Landmark },
   { href: '/admin/ledger', key: 'ledgerIntegrity', icon: ShieldCheck },
+  { href: '/admin/sms-outbox', key: 'smsOutbox', icon: MessageSquare },
 ] as const;
 
 export function AdminNav() {
