@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { LayoutDashboard, Database, Building2, Scale, MessageSquareWarning, Cpu, Users } from 'lucide-react';
+import { LayoutDashboard, Database, Building2, Scale, MessageSquareWarning, Cpu, Users, Landmark, ShieldCheck } from 'lucide-react';
 import { Link, usePathname } from '@/i18n/navigation';
 import { cn } from '@/lib/utils/cn';
 
@@ -20,6 +20,8 @@ const ITEMS = [
   { href: '/admin/moderation', key: 'moderation', icon: MessageSquareWarning },
   { href: '/admin/ai-logs', key: 'aiLogs', icon: Cpu },
   { href: '/admin/users', key: 'users', icon: Users },
+  { href: '/admin/civic-roles', key: 'civicRoles', icon: Landmark },
+  { href: '/admin/ledger', key: 'ledgerIntegrity', icon: ShieldCheck },
 ] as const;
 
 export function AdminNav() {

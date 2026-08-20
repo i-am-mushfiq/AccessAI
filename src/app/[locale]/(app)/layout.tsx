@@ -42,7 +42,12 @@ export default async function AppLayout({
      * on chat than on the timeline.
      */
     <VoiceProvider authenticated isStaff={isStaff}>
-      <AppShell userName={session.user.name} userRole={session.user.role} unreadCount={unread}>
+      <AppShell
+        userName={session.user.name}
+        userRole={session.user.role}
+        civicRole={session.user.civicRole}
+        unreadCount={unread}
+      >
         {children}
       </AppShell>
     </VoiceProvider>

@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import {
   Home, MessageCircle, LayoutGrid, CalendarDays, Bookmark,
   Bell, User, Settings, Shield, MapPin, LogOut, HelpCircle, MessageSquareWarning, ShieldCheck,
+  Landmark, HandCoins, ClipboardCheck,
 } from 'lucide-react';
 import { Link, usePathname } from '@/i18n/navigation';
 import { cn } from '@/lib/utils/cn';
@@ -13,7 +14,7 @@ import { VoiceButton } from '@/components/voice/VoiceButton';
 import { VoiceSheet } from '@/components/voice/VoiceSheet';
 import { useVoice, useVoiceActions } from '@/components/providers/VoiceProvider';
 import { usePreferences } from '@/components/providers/PreferencesProvider';
-import { TEXT_SCALES, type UserRole } from '@/lib/domain/enums';
+import { TEXT_SCALES, type UserRole, type CivicRole } from '@/lib/domain/enums';
 
 /**
  * App shell — BDS §5.3 and §57.
@@ -46,6 +47,8 @@ const PRIMARY_NAV: readonly NavItem[] = [
 const SECONDARY_NAV: readonly NavItem[] = [
   { href: '/nearby', labelKey: 'nearby', icon: MapPin },
   { href: '/issues', labelKey: 'issues', icon: MessageSquareWarning },
+  { href: '/budget', labelKey: 'budget', icon: Landmark },
+  { href: '/entitlements', labelKey: 'entitlements', icon: HandCoins },
   { href: '/identity', labelKey: 'identity', icon: ShieldCheck },
   { href: '/notifications', labelKey: 'notifications', icon: Bell },
   { href: '/profile', labelKey: 'profile', icon: User },
@@ -56,6 +59,8 @@ export interface AppShellProps {
   readonly children: ReactNode;
   readonly userName: string;
   readonly userRole: UserRole;
+  /** Phase 3 civic title (SJ-31–34) — governs the "Officer" link only. */
+  readonly civicRole?: CivicRole;
   readonly unreadCount?: number;
   /** Page title for the mobile app bar. */
   readonly title?: string;
@@ -67,6 +72,7 @@ export function AppShell({
   children,
   userName,
   userRole,
+  civicRole = 'none',
   unreadCount = 0,
   title,
   hideBottomNav = false,
@@ -155,6 +161,13 @@ export function AppShell({
                 badge={item.href === '/notifications' ? unreadCount : undefined}
               />
             ))}
+            {civicRole === 'upazila_officer' ? (
+              <SidebarLink
+                item={{ href: '/officer', labelKey: 'officer', icon: ClipboardCheck }}
+                active={isActive('/officer')}
+                label={t('officer')}
+              />
+            ) : null}
             {isStaff ? (
               <SidebarLink
                 item={{ href: '/admin', labelKey: 'admin', icon: Shield }}
