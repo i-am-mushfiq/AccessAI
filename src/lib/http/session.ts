@@ -1,9 +1,10 @@
 import { cookies } from 'next/headers';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db/client';
-import { users, userProfiles, userSettings } from '@/lib/db/schema';
+import { users, userProfiles, userSettings, type DecryptedUserProfile } from '@/lib/db/schema';
 import { verifyAccessToken, COOKIE_NAMES } from '@/lib/security/tokens';
 import { ROLE_RANK, STAFF_ROLES, type UserRole } from '@/lib/domain/enums';
+import { decryptStringArray } from '@/lib/security/field-encryption';
 import { fail, ERROR_CODES } from './response';
 import type { NextResponse } from 'next/server';
 
@@ -43,7 +44,12 @@ export async function getSession(): Promise<Session | null> {
 
 export interface FullSession extends Session {
   readonly user: typeof users.$inferSelect;
-  readonly profile: typeof userProfiles.$inferSelect | null;
+  /**
+   * SJ-44 — `medicalConditions` is decrypted here, once, so every downstream
+   * reader (routes, the eligibility mapper, UI) sees a plain string array and
+   * never has to know the column is encrypted at rest.
+   */
+  readonly profile: DecryptedUserProfile | null;
   readonly settings: typeof userSettings.$inferSelect | null;
 }
 
@@ -65,7 +71,7 @@ export async function getFullSession(): Promise<FullSession | null> {
     name: user.name,
     locale: user.language,
     user,
-    profile: profile ?? null,
+    profile: profile ? { ...profile, medicalConditions: decryptStringArray(profile.medicalConditions) } : null,
     settings: settings ?? null,
   };
 }

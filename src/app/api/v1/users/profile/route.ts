@@ -7,6 +7,7 @@ import { requireFullSession } from '@/lib/http/session';
 import { updateProfileSchema } from '@/lib/validation/schemas';
 import { toEligibilityProfile, profileCompleteness } from '@/modules/eligibility/profile-mapper';
 import { getDistrict } from '@/lib/domain/geography';
+import { encryptStringArray, decryptStringArray } from '@/lib/security/field-encryption';
 
 /**
  * GET   /api/v1/users/profile
@@ -60,20 +61,34 @@ export async function PATCH(request: NextRequest) {
       // and relying on a downstream reader to respect the flag.
       delete patch.medicalConditions;
     }
+    // SJ-44 — encrypt at rest. `patch.medicalConditions` up to here is either
+    // absent, `null` (explicit clear), or the plaintext array the client sent.
+    if ('medicalConditions' in patch) {
+      patch.medicalConditions = encryptStringArray(patch.medicalConditions as string[] | null);
+    }
 
-    let updated;
+    let updatedRaw;
     if (before) {
-      [updated] = await db
+      [updatedRaw] = await db
         .update(userProfiles)
         .set(patch)
         .where(eq(userProfiles.userId, guard.session.userId))
         .returning();
     } else {
-      [updated] = await db
+      [updatedRaw] = await db
         .insert(userProfiles)
         .values({ userId: guard.session.userId, ...patch })
         .returning();
     }
+    const updated = updatedRaw
+      ? { ...updatedRaw, medicalConditions: decryptStringArray(updatedRaw.medicalConditions) }
+      : undefined;
+
+    // Redacted, not the real before/after: the audit log is a separate,
+    // unencrypted table, and copying decrypted health data into it would
+    // undo the point of encrypting the column in the first place.
+    const redact = (p: typeof before | typeof updated) =>
+      p ? ({ ...p, medicalConditions: p.medicalConditions ? '[redacted]' : p.medicalConditions } as unknown as Record<string, unknown>) : null;
 
     await db.insert(auditLog).values({
       actorId: guard.session.userId,
@@ -81,8 +96,8 @@ export async function PATCH(request: NextRequest) {
       action: 'profile.update',
       entityType: 'user_profile',
       entityId: guard.session.userId,
-      before: before ? (before as unknown as Record<string, unknown>) : null,
-      after: updated as unknown as Record<string, unknown>,
+      before: redact(before),
+      after: redact(updated),
     });
 
     return ok({

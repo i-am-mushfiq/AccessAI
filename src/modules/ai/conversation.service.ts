@@ -16,6 +16,7 @@ import { pickLocalised, type PlannedOpportunity, type ResponsePlan } from './res
 import type { Intent, LifeEvent } from '@/lib/domain/enums';
 import type { RuleField } from '@/lib/domain/rules';
 import { formatDate } from '@/lib/format/dates';
+import { encryptStringArray, decryptStringArray } from '@/lib/security/field-encryption';
 
 /**
  * Conversation pipeline — PRD §19 and §14.
@@ -122,10 +123,14 @@ async function applyExtractedEntities(
     setIfAbsent('isStudent', extracted.isStudent, existing.isStudent);
     setIfAbsent('hasBusiness', extracted.hasBusiness, existing.hasBusiness);
 
-    // Medical conditions are only stored with explicit consent (PRD §68).
+    // Medical conditions are only stored with explicit consent (PRD §68), and
+    // encrypted at rest (SJ-44) — `existing.medicalConditions` is ciphertext,
+    // decrypted here before merging; `patch.medicalConditions` is encrypted
+    // again before the write below.
     if (extracted.medicalConditions && existing.shareHealthData) {
-      const merged = [...new Set([...(existing.medicalConditions ?? []), ...extracted.medicalConditions])];
-      patch.medicalConditions = merged;
+      const currentConditions = decryptStringArray(existing.medicalConditions) ?? [];
+      const merged = [...new Set([...currentConditions, ...extracted.medicalConditions])];
+      patch.medicalConditions = encryptStringArray(merged);
       applied.push('medicalConditions');
     }
 
@@ -253,7 +258,10 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const profileUpdated = await applyExtractedEntities(input.userId, nlu.entities.profile, detectedEvents);
 
   const [profileRow] = await db.select().from(userProfiles).where(eq(userProfiles.userId, input.userId)).limit(1);
-  const profile = toEligibilityProfile({ user, profile: profileRow ?? null });
+  const decryptedProfileRow = profileRow
+    ? { ...profileRow, medicalConditions: decryptStringArray(profileRow.medicalConditions) }
+    : null;
+  const profile = toEligibilityProfile({ user, profile: decryptedProfileRow });
 
   /* ---- build the plan ---- */
   let plan: ResponsePlan;

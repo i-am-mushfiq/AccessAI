@@ -1,4 +1,4 @@
-import type { UserProfile, User } from '@/lib/db/schema';
+import type { DecryptedUserProfile, User } from '@/lib/db/schema';
 import type { EligibilityProfile } from './engine';
 import type { RuleField } from '@/lib/domain/rules';
 import { getDistrict } from '@/lib/domain/geography';
@@ -26,7 +26,7 @@ export function computeAge(dateOfBirth: Date | null, statedAge: number | null, n
 
 export interface MapProfileInput {
   readonly user?: Pick<User, 'district'> | null;
-  readonly profile?: UserProfile | null;
+  readonly profile?: DecryptedUserProfile | null;
   readonly now?: Date;
   /**
    * Values supplied for a single what-if evaluation (the "check eligibility
