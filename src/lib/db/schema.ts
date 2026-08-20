@@ -1024,6 +1024,21 @@ export const ussdSessions = sqliteTable(
   (t) => [uniqueIndex('ussd_session_uq').on(t.sessionId)],
 );
 
+/**
+ * SJ-23/48's demo aid, nothing more: `SMS_PROVIDER=demo` writes here instead
+ * of a real vendor call, so a staff member can open /admin/sms-outbox in a
+ * second browser tab and show "the text that arrived on the phone" during a
+ * live demo. Staff-only to view (see the API route) — an OTP is exactly the
+ * kind of thing this table must never expose to an unauthenticated visitor,
+ * demo or not. Never written to when a real provider is configured.
+ */
+export const demoSmsOutbox = sqliteTable('demo_sms_outbox', {
+  id: id(),
+  phone: text('phone').notNull(),
+  body: text('body').notNull(),
+  createdAt: createdAt(),
+});
+
 /* ======================================================================
    AI OPERATIONS & GOVERNANCE
    ====================================================================== */
@@ -1330,6 +1345,7 @@ export type Disbursement = typeof disbursements.$inferSelect;
 export type DonorOrganization = typeof donorOrganizations.$inferSelect;
 export type DonorFundingScope = typeof donorFundingScopes.$inferSelect;
 export type UssdSession = typeof ussdSessions.$inferSelect;
+export type DemoSmsOutboxEntry = typeof demoSmsOutbox.$inferSelect;
 
 /**
  * The shape a `userProfiles` row takes AFTER `medicalConditions` has been
