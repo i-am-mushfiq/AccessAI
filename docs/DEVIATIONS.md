@@ -446,4 +446,69 @@ paragraph is that correction, kept in-repo rather than only in an external audit
   the request — resolved from `userProfiles.residencyUnionId`, set only by Phase 1. A citizen with no
   verified residency sees a plain "verify your union first" state, not an empty feed that looks like
   a bug.
+
+## 17. Shebar Janala Phase 3: ledger & accountability — and where "blockchain" actually is
+
+**What "blockchain" means in this codebase, precisely.** `modules/ledger/hash-chain.ts` implements a
+hash chain — every row folds the previous row's hash into its own, so an entry silently edited after
+the fact stops matching its own hash, and a row spliced out or reordered breaks the link to whatever
+comes after it. This is real, tested, and live-demonstrated (below) — but it is **one writer, one
+SQLite database**, not a distributed ledger. It detects tampering after the fact; it cannot stop an
+operator with direct database access from rewriting the entire chain and recomputing every hash, the
+way no purely software hash-chain running on infrastructure that operator controls ever can. That is
+also exactly the limit the source BRD itself accepted for a pilot ("simulated blockchain... hash-chain
+simulation only," §5/§8 of the original BRD) — this build meets that bar, not a heavier one, and says
+so rather than letting "hash-chain" imply more than it does.
+
+**Two independent chains, deliberately not one.** SJ-13 asked to upgrade `audit_log` (every staff
+action); SJ-14 asked for a dedicated ledger for financial records (budget allocations and
+disbursements, per the BRD's ERD). Both use the same `modules/ledger/hash-chain.ts` primitive, but
+they are separate sequences in separate tables — an altered financial record and an altered staff
+action are detected independently, and `GET /api/v1/ledger/verify` (staff-only; `/admin/ledger` in
+the UI) reports on both. This was live-verified, not just unit-tested: a budget allocation's ledger
+entry was edited directly at the SQLite level — bypassing the running application entirely — and
+`verify` correctly reported `intact: false` with the exact row id and the reason ("no longer matches
+its own hash"). Restored afterwards; nothing about that test is left in the demo data.
+
+**Single-writer race, accepted not hidden.** Both `appendLedgerEntry` and `recordAudit` read the
+chain's last hash, then write a new row referencing it, in two separate statements. Two concurrent
+appends could both read the same "last" hash and race. The unique index on `prev_hash` (both tables)
+turns that race into a loud insert failure rather than a silently forked chain — acceptable at this
+write volume (a union posts a handful of allocations a month), not a substitute for a serialised
+writer or a queue at real multi-union scale.
+
+**Pre-migration rows are honestly outside the chain.** `audit_log` rows written before this migration
+have a null `prev_hash`/`entry_hash` and are skipped by `verifyChain`, not treated as broken — they
+are unhashed history, not tampered evidence. The chain begins at the first row written after Phase 3
+shipped.
+
+**Civic roles are a second axis, not a rank.** SJ-31–34 could have been folded into the existing
+`ROLE_RANK` ladder the way `administrator`/`moderator` already work, but a Zila officer is not
+"senior enough" to post a budget allocation for a union they do not chair — civic authority is about
+holding a specific title for a specific place, not outranking someone. `modules/civic/roles.ts`
+checks title-and-place together for every action; `CIVIC_ROLE_RANK` exists only for display ordering
+and is never used to authorise anything (see its own tests).
+
+**SJ-15/BR-2 is a real status check, and it could not be built by repurposing the eligibility
+engine.** `modules/eligibility/engine.ts` answers "what could I newly qualify for" against a
+self-described profile and sample programme rules. `modules/entitlements/entitlement.service.ts`
+answers "what am I already enrolled in, and what has been paid" against a `beneficiaries` record an
+authorised official actually created, matched by the citizen's own NID hash from Phase 1. Neither
+module imports the other; they are answering different questions with different data, on purpose.
+
+**Escalation triggers once, not on every subsequent flag** — `ESCALATION_MIN_FLAGS` (2) and
+`ESCALATION_THRESHOLD_RATIO` (50%, the BRD's own example) are enforced together
+(`modules/budget/escalation-rules.ts`) so a union with a single verified resident cannot escalate on
+that one person's first flag — a ratio doing the work a headcount should. Once escalated, the
+`escalations` row is unique per allocation; a rising ratio afterwards does not re-notify. If no
+`upazila_officer` is assigned to the union's upazila yet, the escalation is still recorded with a
+null officer rather than silently dropped — visible under "Unassigned" to any upazila officer, and to
+an administrator via `/admin/civic-roles`, as a real gap someone can close by making an assignment,
+not a notification that quietly went nowhere.
+
+**Not built in Phase 3, by the roadmap's own design:** automatic complaint-routing to a Zila officer
+(SJ-11's second half — the source roadmap defers this explicitly to Phase 3's own successor); a
+public-facing transparency surface for the ledger (SJ-37, Phase 4); Zila-officer rollup dashboards
+(SJ-29, Phase 4). The Zila officer civic role exists and can be assigned today; it has no dedicated
+screen yet, on purpose.
 - **PWA / push notifications** are not implemented. Notifications are persisted and shown in-app.
