@@ -19,6 +19,7 @@ const JOBS = [
   'detect_staleness',
   'scheduled_notifications',
   'aggregate_analytics',
+  'enforce_data_retention',
 ] as const;
 
 const JOB_LABELS: Record<string, { bn: string; en: string }> = {
@@ -27,6 +28,7 @@ const JOB_LABELS: Record<string, { bn: string; en: string }> = {
   detect_staleness: { bn: 'পুরনো তথ্য চিহ্নিত করুন', en: 'Flag stale records' },
   scheduled_notifications: { bn: 'শেষ তারিখের মনে করানো পাঠান', en: 'Send deadline reminders' },
   aggregate_analytics: { bn: 'পরিসংখ্যান হিসাব করুন', en: 'Roll up analytics' },
+  enforce_data_retention: { bn: 'পুরনো তথ্য মুছে ফেলুন', en: 'Enforce data retention' },
 };
 
 const JOB_DESCRIPTIONS: Record<string, { bn: string; en: string }> = {
@@ -47,6 +49,10 @@ const JOB_DESCRIPTIONS: Record<string, { bn: string; en: string }> = {
     en: 'Reminds citizens about saved programmes closing within seven days.',
   },
   aggregate_analytics: { bn: 'আজকের পরিসংখ্যান সংরক্ষণ করে।', en: "Stores today's analytics rollup." },
+  enforce_data_retention: {
+    bn: 'পুরনো কথোপকথন, এআই লগ এবং মেয়াদোত্তীর্ণ ওটিপি মুছে দেয়। লেজার ও কার্যবিবরণী কখনো মোছে না।',
+    en: 'Deletes old conversations, AI logs, and expired OTPs. Never touches the ledger or audit log.',
+  },
 };
 
 export interface JobRunView {

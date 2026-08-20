@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
 import './load-env';
+import { eq } from 'drizzle-orm';
 import { db, initialisePragmas, sqlClient } from '../src/lib/db/client';
 import * as s from '../src/lib/db/schema';
 import {
@@ -79,6 +80,11 @@ async function main() {
     // block legible as "everything Shebar Janala owns, before users".
     await db.delete(s.donorFundingScopes);
     await db.delete(s.donorOrganizations);
+    // Phase 5 demo aids — ephemeral by nature, cleared on every reset so a
+    // stale "sent" message or half-finished USSD session from a previous
+    // demo never lingers into the next one.
+    await db.delete(s.demoSmsOutbox);
+    await db.delete(s.ussdSessions);
     await db.delete(s.sessions);
     await db.delete(s.otpChallenges);
     await db.delete(s.userSettings);
@@ -678,6 +684,83 @@ async function main() {
         status: 'scheduled',
         recordedBy: chairmanId,
       });
+
+      // Phase 4/5 — one real, live-triggering example of each anomaly check
+      // (modules/oversight/anomaly.ts), so the Leader Portal's alerts section
+      // shows something on a fresh seed instead of correctly-but-uselessly
+      // showing nothing until someone manufactures an example by hand.
+      console.log('  anomaly examples (allocation outlier, duplicate enrolment, overpayment, stale escalation)…');
+
+      // 1. Allocation outlier — ~6x the median of Kaligonj's other three
+      // allocations (850k/1.2M/450k → median 850k), comfortably past the
+      // 3x threshold.
+      await createAllocation({
+        unionId: kaligonjId,
+        postedBy: chairmanId,
+        projectName: 'Emergency Flood Relief Fund',
+        description: 'A single large emergency allocation following unseasonal flooding — deliberately unusual in size.',
+        amount: 5_000_000,
+        allocationDate: addDays(now, -1),
+      });
+
+      // 2. Duplicate beneficiary enrolment — the same (fake, demo-only) NID
+      // active in the same programme across two different unions.
+      const DEMO_DUPLICATE_NID = '1122334455';
+      await enrollBeneficiary({
+        nidNumber: DEMO_DUPLICATE_NID,
+        unionId: kaligonjId,
+        programCode: 'widow-allowance',
+        programName: 'Widow Allowance',
+        programNameBn: 'বিধবা ভাতা',
+        enrolledBy: chairmanId,
+        amount: 650,
+        period: 'monthly',
+      });
+      const mominpurIdForDuplicate = unionIds.get('rangpur-sadar-mominpur');
+      if (mominpurStaffId && mominpurIdForDuplicate) {
+        await enrollBeneficiary({
+          nidNumber: DEMO_DUPLICATE_NID,
+          unionId: mominpurIdForDuplicate,
+          programCode: 'widow-allowance',
+          programName: 'Widow Allowance',
+          programNameBn: 'বিধবা ভাতা',
+          enrolledBy: mominpurStaffId,
+          amount: 650,
+          period: 'monthly',
+        });
+      }
+
+      // 3. Overpaid disbursement — a (fake, demo-only) beneficiary whose
+      // single disbursement exceeds their entitlement's stated amount. Also,
+      // like #2 above, correctly trips the ghost-beneficiary check (SJ-19):
+      // neither demo NID belongs to any account that ever verified it.
+      const DEMO_OVERPAY_NID = '2233445566';
+      const overpayEnrollment = await enrollBeneficiary({
+        nidNumber: DEMO_OVERPAY_NID,
+        unionId: kaligonjId,
+        programCode: 'elderly-allowance',
+        programName: 'Elderly Allowance',
+        programNameBn: 'বয়স্ক ভাতা',
+        enrolledBy: chairmanId,
+        amount: 500,
+        period: 'monthly',
+      });
+      await recordDisbursement({
+        entitlementId: overpayEnrollment.entitlement.id,
+        amount: 800,
+        scheduledFor: addDays(now, -2),
+        status: 'paid',
+        recordedBy: chairmanId,
+      });
+
+      // 4. Stale escalation — backdated directly (escalateAllocation always
+      // stamps `createdAt` as "now"), since SJ-17/18's flow has no other way
+      // to produce an escalation that has already been sitting unresolved
+      // for two weeks the moment the demo starts.
+      await db
+        .update(s.escalations)
+        .set({ createdAt: addDays(now, -20) })
+        .where(eq(s.escalations.allocationId, suspectAllocation.id));
     }
 
     // A second union in the SAME upazila, so an upazila officer's rollup

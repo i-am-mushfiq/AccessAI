@@ -74,6 +74,7 @@ export async function getLeaderPortalData(scope: OversightScope) {
   const beneficiaryById = new Map(beneficiaryRows.map((b) => [b.id, b] as const));
 
   const now = new Date();
+  const verifiedNidHashes = await getVerifiedNidHashes();
   const anomalies: Anomaly[] = [
     ...detectAllocationOutliers(allocationRows.map((a) => ({ id: a.id, unionId: a.unionId, amount: a.amount, projectName: a.projectName }))),
     ...detectStaleEscalations(
@@ -95,6 +96,14 @@ export async function getLeaderPortalData(scope: OversightScope) {
           return { id: d.id, amount: d.amount, entitlementAmount: entitlement.amount, programName: beneficiary?.programName ?? 'programme' };
         })
         .filter((r): r is NonNullable<typeof r> => r !== null),
+    ),
+    // SJ-19 — was previously exported as a standalone function nobody ever
+    // called; folded into the same anomalies list every other check already
+    // reaches, so it actually reaches the Leader Portal a chairman/officer
+    // looks at instead of existing only as unit-tested, unreachable code.
+    ...detectUnverifiedBeneficiaryIdentity(
+      beneficiaryRows.map((b) => ({ id: b.id, nidHash: b.nidHash, programName: b.programName, status: b.status })),
+      verifiedNidHashes,
     ),
   ];
 
@@ -238,14 +247,3 @@ export async function getVerifiedNidHashes(): Promise<Set<string>> {
   return new Set(rows.map((r) => r.hash).filter((h): h is string => Boolean(h)));
 }
 
-/** SJ-19 — beneficiaries whose identity nobody in the system has ever verified. */
-export async function listUnverifiedBeneficiaryAlerts(scope: OversightScope): Promise<Anomaly[]> {
-  const unionIds = await resolveUnionIds(scope);
-  if (unionIds.length === 0) return [];
-  const rows = await db.select().from(beneficiaries).where(inArray(beneficiaries.unionId, unionIds));
-  const verified = await getVerifiedNidHashes();
-  return detectUnverifiedBeneficiaryIdentity(
-    rows.map((b) => ({ id: b.id, nidHash: b.nidHash, programName: b.programName, status: b.status })),
-    verified,
-  );
-}
