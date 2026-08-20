@@ -457,3 +457,11 @@ export type EntitlementPeriod = (typeof ENTITLEMENT_PERIODS)[number];
 
 export const DISBURSEMENT_STATUSES = ['scheduled', 'paid', 'failed', 'on_hold'] as const;
 export type DisbursementStatus = (typeof DISBURSEMENT_STATUSES)[number];
+
+/* --------------------------------------------- civic: Phase 5 moderation */
+// SJ-21. `not_applicable` is the default for every issue without a photo;
+// `unavailable` means a photo was submitted but no vision provider is
+// configured, which is why it still routes to human review rather than
+// passing silently — see modules/issues/vision-moderation.ts.
+export const VISION_MODERATION_STATUSES = ['not_applicable', 'unavailable', 'passed', 'flagged'] as const;
+export type VisionModerationStatus = (typeof VISION_MODERATION_STATUSES)[number];

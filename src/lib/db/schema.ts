@@ -10,6 +10,7 @@ import {
   SERVICE_LOCATION_TYPES, NID_VERIFICATION_STATUSES, RESIDENCY_VERIFICATION_METHODS,
   ISSUE_CATEGORIES, ISSUE_STATUSES, CIVIC_ROLES, LEDGER_ENTITY_TYPES, ESCALATION_STATUSES,
   BENEFICIARY_STATUSES, ENTITLEMENT_STATUSES, ENTITLEMENT_PERIODS, DISBURSEMENT_STATUSES,
+  VISION_MODERATION_STATUSES,
 } from '../domain/enums';
 import type { RuleSet } from '../domain/rules';
 
@@ -60,6 +61,14 @@ export const users = sqliteTable(
     civicUpazila: text('civic_upazila'),
     civicDistrict: text('civic_district'),
 
+    /**
+     * SJ-27 — a donor is not a civic title (it is not "senior" or "junior" to
+     * a chairman, and holds no authority over any union), so it is its own
+     * column rather than a fifth CIVIC_ROLES value. Presence of this FK is
+     * what makes an account a donor representative; see modules/oversight.
+     */
+    donorOrgId: text('donor_org_id').references(() => donorOrganizations.id, { onDelete: 'set null' }),
+
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -67,6 +76,7 @@ export const users = sqliteTable(
     uniqueIndex('users_phone_uq').on(t.phone),
     index('users_role_idx').on(t.role),
     index('users_civic_idx').on(t.civicRole, t.civicUnionId),
+    index('users_donor_idx').on(t.donorOrgId),
   ],
 );
 
@@ -107,8 +117,17 @@ export const userProfiles = sqliteTable(
     crops: text('crops', { mode: 'json' }).$type<string[]>(),
     livestock: text('livestock', { mode: 'json' }).$type<string[]>(),
     isPregnant: integer('is_pregnant', { mode: 'boolean' }),
-    /** Health data is opt-in and user-controlled (PRD §68). */
-    medicalConditions: text('medical_conditions', { mode: 'json' }).$type<string[]>(),
+    /**
+     * Health data is opt-in and user-controlled (PRD §68) AND, since SJ-44,
+     * encrypted at rest (AES-256-GCM — see lib/security/field-encryption.ts).
+     * The column stores an opaque ciphertext string, not a JSON array — hence
+     * plain `text()`, not `{mode:'json'}`. Every read/write site decrypts or
+     * encrypts explicitly; there is no transparent column-level codec in
+     * Drizzle. The three call sites that touch this column directly are
+     * lib/http/session.ts, modules/ai/conversation.service.ts, and
+     * app/api/v1/users/profile/route.ts — see docs/DEVIATIONS.md §18.
+     */
+    medicalConditions: text('medical_conditions'),
     shareHealthData: integer('share_health_data', { mode: 'boolean' }).notNull().default(false),
     citizenship: text('citizenship').default('bangladeshi'),
     preferredCountry: text('preferred_country'),
@@ -719,6 +738,16 @@ export const issues = sqliteTable(
     /** Deterministic keyword-filter result — a signal for the queue, never a verdict (BRD BR-1). */
     autoFlagged: integer('auto_flagged', { mode: 'boolean' }).notNull().default(false),
     autoFlagReason: text('auto_flag_reason'),
+    /**
+     * SJ-21 — recorded separately from `autoFlagged`/`autoFlagReason` (which
+     * vision moderation also sets, so the existing moderation queue needs no
+     * changes) purely so the audit trail shows WHICH check ran: a real vision
+     * call that passed, one that flagged, or "no vision provider configured"
+     * — never silently indistinguishable from "never checked". See
+     * modules/issues/vision-moderation.ts.
+     */
+    visionModerationStatus: text('vision_moderation_status', { enum: VISION_MODERATION_STATUSES })
+      .notNull().default('not_applicable'),
     moderatedBy: text('moderated_by'),
     moderationNote: text('moderation_note'),
     resolvedBy: text('resolved_by'),
@@ -928,6 +957,74 @@ export const entitlementsRelations = relations(entitlements, ({ one, many }) => 
 }));
 
 /* ======================================================================
+   CIVIC — SHEBAR JANALA PHASE 4/5: OVERSIGHT, REACH
+   ====================================================================== */
+
+/**
+ * SJ-27 — an external funder (NGO, UNDP, a donor agency), never a citizen or
+ * a civic official. Kept deliberately thin: the entity a donor portal is
+ * ultimately about is `donorFundingScopes`, not this row.
+ */
+export const donorOrganizations = sqliteTable(
+  'donor_organizations',
+  {
+    id: id(),
+    name: text('name').notNull(),
+    nameBn: text('name_bn').notNull(),
+    description: text('description'),
+    createdAt: createdAt(),
+  },
+);
+
+/**
+ * What a donor org actually funds — a program code, not a blank cheque over
+ * the whole ledger. SJ-27's exit criterion ("scoped to what a donor is
+ * actually funding") is enforced by scoping every donor-portal query to the
+ * program codes listed here for that org, exactly as a civic role is scoped
+ * to a union/upazila/district rather than trusted by rank alone.
+ */
+export const donorFundingScopes = sqliteTable(
+  'donor_funding_scopes',
+  {
+    id: id(),
+    donorOrgId: text('donor_org_id').notNull().references(() => donorOrganizations.id, { onDelete: 'cascade' }),
+    /** Matches `beneficiaries.programCode` — never a free-text label. */
+    programCode: text('program_code').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('donor_scope_uq').on(t.donorOrgId, t.programCode)],
+);
+
+export const donorOrganizationsRelations = relations(donorOrganizations, ({ many }) => ({
+  scopes: many(donorFundingScopes),
+  representatives: many(users),
+}));
+
+/**
+ * SJ-23/48 — one row per live USSD session. A USSD aggregator calls back on
+ * every keypress with the SAME `sessionId` and the FULL text typed so far
+ * (not just the latest digit), so the server must remember which step a
+ * session is on between requests — unlike every other route in this app,
+ * which is stateless. Short-lived by nature (a session times out in the
+ * telecom network after ~90s of inactivity); nothing here needs the
+ * retention job to sweep it, expired rows are simply never read again, but
+ * old ones are still purged periodically to keep the table small.
+ */
+export const ussdSessions = sqliteTable(
+  'ussd_sessions',
+  {
+    id: id(),
+    sessionId: text('session_id').notNull(),
+    phone: text('phone').notNull(),
+    step: text('step').notNull().default('menu'),
+    context: text('context', { mode: 'json' }).$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('ussd_session_uq').on(t.sessionId)],
+);
+
+/* ======================================================================
    AI OPERATIONS & GOVERNANCE
    ====================================================================== */
 
@@ -1134,6 +1231,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   saved: many(savedOpportunities),
   notifications: many(notifications),
   plans: many(actionPlans),
+  donorOrg: one(donorOrganizations, { fields: [users.donorOrgId], references: [donorOrganizations.id] }),
 }));
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -1229,5 +1327,20 @@ export type Escalation = typeof escalations.$inferSelect;
 export type Beneficiary = typeof beneficiaries.$inferSelect;
 export type Entitlement = typeof entitlements.$inferSelect;
 export type Disbursement = typeof disbursements.$inferSelect;
+export type DonorOrganization = typeof donorOrganizations.$inferSelect;
+export type DonorFundingScope = typeof donorFundingScopes.$inferSelect;
+export type UssdSession = typeof ussdSessions.$inferSelect;
+
+/**
+ * The shape a `userProfiles` row takes AFTER `medicalConditions` has been
+ * decrypted — i.e. what every reader outside lib/http/session.ts,
+ * modules/ai/conversation.service.ts, and the profile route should expect.
+ * The raw `UserProfile` type still describes what is actually in the
+ * database column (ciphertext), which is exactly why those three sites are
+ * the only ones allowed to hand back a raw row.
+ */
+export type DecryptedUserProfile = Omit<UserProfile, 'medicalConditions'> & {
+  readonly medicalConditions: string[] | null;
+};
 
 export { sql };
