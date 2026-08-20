@@ -97,6 +97,7 @@ export const catalog = {
     entitlements: ['আমার ভাতা', 'My entitlements'],
     officer: ['উপজেলা কর্মকর্তা', 'Upazila officer'],
     leader: ['নেতৃত্ব ড্যাশবোর্ড', 'Leadership dashboard'],
+    beneficiaries: ['সুবিধাভোগী', 'Beneficiaries'],
     donor: ['দাতা পোর্টাল', 'Donor portal'],
     mainNavigation: ['প্রধান মেনু', 'Main navigation'],
     skipToContent: ['মূল অংশে যান', 'Skip to main content'],
@@ -982,6 +983,8 @@ export const catalog = {
     donorProgramCodes: ['যেসব কর্মসূচিতে অর্থায়ন করে', 'Programme codes funded'],
     noDonorOrg: ['কোনো দাতা সংস্থা নয়', 'Not a donor representative'],
     assignDonorOrg: ['দাতা সংস্থা নির্ধারণ করুন', 'Assign donor organisation'],
+    smsOutbox: ['এসএমএস আউটবক্স (ডেমো)', 'SMS outbox (demo)'],
+    smsOutboxEmpty: ['এখনও কোনো ডেমো এসএমএস পাঠানো হয়নি।', 'No demo SMS sent yet.'],
   },
 
   identity: {
@@ -1147,6 +1150,56 @@ export const catalog = {
     },
   },
 
+  beneficiaries: {
+    title: ['সুবিধাভোগী নিবন্ধন', 'Beneficiary enrolment'],
+    subtitle: [
+      'আপনার ইউনিয়নের ভাতাভোগীদের নিবন্ধন করুন এবং প্রকৃত পরিশোধ রেকর্ড করুন।',
+      'Enrol beneficiaries in your union and record real disbursements against their entitlements.',
+    ],
+    notOfficial: [
+      'এই পাতাটি শুধুমাত্র ইউনিয়ন চেয়ারম্যান ও ইউনিয়ন কর্মীদের জন্য।',
+      'This screen is for union chairmen and union office staff only.',
+    ],
+    empty: ['এখনও কোনো সুবিধাভোগী নিবন্ধিত হয়নি।', 'No beneficiaries enrolled yet.'],
+    enrolNew: ['নতুন সুবিধাভোগী নিবন্ধন করুন', 'Enrol a new beneficiary'],
+    enrol: ['নিবন্ধন করুন', 'Enrol'],
+    enrolled: ['নিবন্ধিত হয়েছে', 'Enrolled'],
+    nidLabel: ['জাতীয় পরিচয়পত্র নম্বর', 'National ID number'],
+    nidHelper: [
+      'এই নম্বর হ্যাশ করে সংরক্ষণ করা হয় — কখনো প্লেইন টেক্সটে নয়।',
+      'This number is stored hashed — never in plain text.',
+    ],
+    programCodeLabel: ['কর্মসূচি কোড', 'Programme code'],
+    programCodeHelper: [
+      'একটি সংক্ষিপ্ত শনাক্তকারী, যেমন widow-allowance',
+      'A short identifier, e.g. widow-allowance',
+    ],
+    programNameLabel: ['কর্মসূচির নাম', 'Programme name'],
+    amountLabel: ['পরিমাণ', 'Amount'],
+    periodLabel: ['মেয়াদ', 'Period'],
+    period: {
+      monthly: ['মাসিক', 'Monthly'],
+      quarterly: ['ত্রৈমাসিক', 'Quarterly'],
+      one_time: ['একবার', 'One-time'],
+    },
+    disbursementsTitle: ['পরিশোধ', 'Disbursements'],
+    recordDisbursement: ['পরিশোধ রেকর্ড করুন', 'Record a disbursement'],
+    dateLabel: ['তারিখ', 'Date'],
+    disbursementStatusLabel: ['পরিশোধের অবস্থা', 'Disbursement status'],
+    scheduledFor: ['নির্ধারিত তারিখ', 'Scheduled for'],
+    paidAt: ['পরিশোধিত হয়েছে', 'Paid'],
+    status: {
+      active: ['সক্রিয়', 'Active'],
+      suspended: ['স্থগিত', 'Suspended'],
+      inactive: ['নিষ্ক্রিয়', 'Inactive'],
+      completed: ['সম্পন্ন', 'Completed'],
+      scheduled: ['নির্ধারিত', 'Scheduled'],
+      paid: ['পরিশোধিত', 'Paid'],
+      failed: ['ব্যর্থ', 'Failed'],
+      on_hold: ['স্থগিত রাখা হয়েছে', 'On hold'],
+    },
+  },
+
   officer: {
     title: ['উপজেলা কর্মকর্তা', 'Upazila officer'],
     subtitle: [
@@ -1230,6 +1283,25 @@ export const catalog = {
     issueStatusBreakdown: ['সমস্যা রিপোর্টের অবস্থা', 'Issue report status'],
     generatedAt: ['তৈরি হয়েছে', 'Generated at'],
     noChairman: ['নির্ধারিত নয়', 'Not assigned'],
+  },
+
+  ussdDemo: {
+    title: ['ইউএসএসডি সিমুলেটর', 'USSD simulator'],
+    subtitle: [
+      'একটি ফিচার ফোন থেকে ডায়াল করলে যা দেখা যেত, ঠিক তাই — কোনো স্মার্টফোন বা ইন্টারনেট ছাড়াই।',
+      'Exactly what dialing in from a feature phone would show — no smartphone or internet needed.',
+    ],
+    phoneLabel: ['ফোন নম্বর (সিমুলেটেড)', 'Phone number (simulated)'],
+    dialToStart: ['কল শুরু করতে নিচের বোতাম চাপুন…', 'Press the button below to dial in…'],
+    inputPlaceholder: ['টাইপ করুন এবং পাঠান', 'Type your response'],
+    send: ['পাঠান', 'Send'],
+    startCall: ['কল শুরু করুন', 'Dial in'],
+    callAgain: ['আবার কল করুন', 'Dial again'],
+    hangUp: ['কল কেটে দিন', 'Hang up'],
+    explainer: [
+      'এই সিমুলেটর সেই একই কোড ব্যবহার করে যা একটি প্রকৃত টেলিকম গেটওয়ে ব্যবহার করত।',
+      'This simulator calls the exact same server logic a real telecom gateway would.',
+    ],
   },
 
   errors: {
