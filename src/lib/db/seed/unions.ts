@@ -43,6 +43,19 @@ const RAW_UNIONS: readonly SeedUnion[] = [
     centroidLng: 89.285,
   },
   {
+    // Same upazila as Kaligonj on purpose (SJ-29): an upazila officer's
+    // rollup is only genuinely exercised when their upazila has more than
+    // one union under it.
+    unionCode: 'rangpur-sadar-mominpur',
+    name: 'Mominpur Union',
+    nameBn: 'মমিনপুর ইউনিয়ন',
+    division: 'rangpur',
+    district: 'rangpur',
+    upazila: 'Rangpur Sadar',
+    centroidLat: 25.71,
+    centroidLng: 89.24,
+  },
+  {
     unionCode: 'rajshahi-paba-daman',
     name: 'Daman Union',
     nameBn: 'দামন ইউনিয়ন',

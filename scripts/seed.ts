@@ -73,6 +73,12 @@ async function main() {
     await db.delete(s.entitlements);
     await db.delete(s.beneficiaries);
     await db.delete(s.ledgerEntries);
+    // Phase 4 — same reasoning as above: `users.donor_org_id` is a nullable
+    // FK (ON DELETE SET NULL), so ordering here is not strictly required for
+    // integrity, but clearing it alongside the other civic tables keeps this
+    // block legible as "everything Shebar Janala owns, before users".
+    await db.delete(s.donorFundingScopes);
+    await db.delete(s.donorOrganizations);
     await db.delete(s.sessions);
     await db.delete(s.otpChallenges);
     await db.delete(s.userSettings);
@@ -385,6 +391,20 @@ async function main() {
     const pinHash = await hashSecret('1234');
     const adminPinHash = await hashSecret('4321');
 
+    // Phase 4 (SJ-27) — a donor organisation scoped to exactly the programme
+    // this seed enrols a real beneficiary in, so the donor portal has real
+    // numbers to show rather than a scope with nothing behind it.
+    console.log('  donor organisation…');
+    const [donorOrg] = await db
+      .insert(s.donorOrganizations)
+      .values({
+        name: 'UNDP Bangladesh — Social Protection Programme',
+        nameBn: 'ইউএনডিপি বাংলাদেশ — সামাজিক সুরক্ষা কর্মসূচি',
+        description: 'Development partner co-financing union-level social safety net disbursements.',
+      })
+      .returning();
+    await db.insert(s.donorFundingScopes).values({ donorOrgId: donorOrg!.id, programCode: 'widow-allowance' });
+
     const demo = [
       {
         phone: '01712345678', name: 'রহিমা বেগম', role: 'citizen' as const, district: 'rangpur',
@@ -483,6 +503,22 @@ async function main() {
         profile: null,
       },
       {
+        // Union staff of Mominpur — the second union in the SAME upazila as
+        // Kaligonj (SJ-29's rollup only means something with two).
+        phone: '01411112222', name: 'সোহেল রানা', role: 'citizen' as const, district: 'rangpur',
+        pinHash, language: 'bn' as const,
+        civicRole: 'union_staff' as const,
+        civicUnionId: unionIds.get('rangpur-sadar-mominpur') ?? null,
+        profile: null,
+      },
+      {
+        // Phase 4 — SJ-27: represents the donor org above. Not a civic role
+        // (a donor holds no authority over any union) and not itself a
+        // citizen profile — the account exists only to view the portal.
+        phone: '01511112222', name: 'Nasreen Chowdhury', role: 'citizen' as const, district: 'dhaka',
+        pinHash, language: 'en' as const, donorOrgId: donorOrg!.id, profile: null,
+      },
+      {
         phone: '01612345678', name: 'AccessAI Moderator', role: 'moderator' as const,
         district: 'dhaka', pinHash: adminPinHash, language: 'en' as const, profile: null,
       },
@@ -496,12 +532,14 @@ async function main() {
     let minaId: string | null = null;
     let chairmanId: string | null = null;
     let upazilaOfficerId: string | null = null;
+    let mominpurStaffId: string | null = null;
     for (const d of demo) {
       const userId = crypto.randomUUID();
       if (d.phone === '01712345678') rahimaId = userId;
       if (d.phone === '01711112222') minaId = userId;
       if (d.phone === '01911112222') chairmanId = userId;
       if (d.phone === '01611112222') upazilaOfficerId = userId;
+      if (d.phone === '01411112222') mominpurStaffId = userId;
       await db.insert(s.users).values({
         id: userId,
         phone: d.phone,
@@ -515,6 +553,7 @@ async function main() {
         civicRole: 'civicRole' in d ? d.civicRole : 'none',
         civicUnionId: 'civicUnionId' in d ? d.civicUnionId : null,
         civicUpazila: 'civicUpazila' in d ? d.civicUpazila : null,
+        donorOrgId: 'donorOrgId' in d ? d.donorOrgId : null,
       });
       await db.insert(s.userSettings).values({ userId, theme: 'light', textScale: 1, numeralSystem: 'latin' });
       if (d.profile) {
@@ -640,6 +679,42 @@ async function main() {
         recordedBy: chairmanId,
       });
     }
+
+    // A second union in the SAME upazila, so an upazila officer's rollup
+    // (SJ-29) actually aggregates more than one union instead of trivially
+    // matching the single-union view.
+    const mominpurId = unionIds.get('rangpur-sadar-mominpur');
+    if (mominpurStaffId && mominpurId) {
+      console.log('  a second union\'s allocation and issue, for the upazila rollup…');
+      await createAllocation({
+        unionId: mominpurId,
+        postedBy: mominpurStaffId,
+        projectName: 'Mominpur Primary School Boundary Wall',
+        description: 'Constructing a boundary wall around the union primary school for student safety.',
+        amount: 380_000,
+        allocationDate: addDays(now, -7),
+      });
+
+      const [mominpurIssue] = await db
+        .insert(s.issues)
+        .values({
+          reporterId: mominpurStaffId,
+          unionId: mominpurId,
+          category: 'electricity',
+          title: 'Frequent power outages in the ward market',
+          description: 'The market area loses power for hours most evenings, affecting shopkeepers after dusk.',
+          lat: 25.709,
+          lng: 89.241,
+          status: 'under_review',
+        })
+        .returning();
+      await db.insert(s.issueStatusHistory).values({
+        issueId: mominpurIssue!.id,
+        fromStatus: null,
+        toStatus: 'under_review',
+        changedBy: mominpurStaffId,
+      });
+    }
   } else {
     console.log('  demo accounts already present (pass --reset-users to recreate)');
   }
@@ -655,6 +730,7 @@ async function main() {
   const [escalationCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.escalations);
   const [beneficiaryCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.beneficiaries);
   const [ledgerCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.ledgerEntries);
+  const [donorOrgCount] = await db.select({ n: s.sql<number>`count(*)` }).from(s.donorOrganizations);
 
   console.log('\nSeed complete:');
   console.log(`  union boundaries    ${unionCount?.n ?? 0}`);
@@ -663,6 +739,7 @@ async function main() {
   console.log(`  escalations         ${escalationCount?.n ?? 0}`);
   console.log(`  beneficiaries       ${beneficiaryCount?.n ?? 0}`);
   console.log(`  ledger entries      ${ledgerCount?.n ?? 0}`);
+  console.log(`  donor organisations ${donorOrgCount?.n ?? 0}`);
   console.log(`  organisations       ${orgCount?.n ?? 0}`);
   console.log(`  programmes          ${oppCount?.n ?? 0}`);
   console.log(`  retrieval chunks    ${chunkCount}`);
@@ -675,6 +752,8 @@ async function main() {
   console.log('  01711112222 / 1234  — Mina Aktar, Kaligonj resident (bn)');
   console.log('  01911112222 / 1234  — Md. Jashim Uddin, Kaligonj chairman (bn)');
   console.log('  01611112222 / 1234  — Nazma Sultana, Rangpur Sadar upazila officer (bn)');
+  console.log('  01411112222 / 1234  — Sohel Rana, Mominpur union staff (bn)');
+  console.log('  01511112222 / 1234  — Nasreen Chowdhury, UNDP donor representative (en)');
   console.log('  01612345678 / 4321  — Moderator');
   console.log('  01512345678 / 4321  — Administrator');
   console.log('\nEvery programme is flagged "unverified_sample". See docs/DEVIATIONS.md §2.\n');
