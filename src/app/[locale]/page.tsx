@@ -60,6 +60,7 @@ export default async function LandingPage({ params }: { params: Promise<{ locale
   const t = await getTranslations('landing');
   const tc = await getTranslations('common');
   const tTransparency = await getTranslations('transparency');
+  const tUssdDemo = await getTranslations('ussdDemo');
 
   const [events, categoryCounts, session] = await Promise.all([
     db
@@ -303,6 +304,12 @@ export default async function LandingPage({ params }: { params: Promise<{ locale
               className="type-body-md inline-flex min-h-12 items-center text-text-link underline focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
             >
               {tTransparency('title')}
+            </Link>
+            <Link
+              href="/ussd-demo"
+              className="type-body-md inline-flex min-h-12 items-center text-text-link underline focus-visible:outline-3 focus-visible:outline-stroke-focus focus-visible:outline-offset-2"
+            >
+              {tUssdDemo('title')}
             </Link>
           </nav>
           <p className="type-caption text-text-tertiary measure">{t('demoNotice')}</p>
