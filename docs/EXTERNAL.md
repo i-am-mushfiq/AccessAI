@@ -143,6 +143,7 @@ email). **Mandatory:** not for development.
 OTP_DEV_ECHO="true"              # development: the code is logged AND shown, labelled
 SMS_PROVIDER="ssl_wireless"      # ssl_wireless | bulksmsbd | twilio
 SMS_API_KEY=""
+SMS_SID=""                       # SSL Wireless and Twilio need this in addition to SMS_API_KEY
 SMS_SENDER_ID=""
 ```
 
@@ -150,22 +151,80 @@ SMS_SENDER_ID=""
 returned as `devCode`, which the UI renders behind an explicit *development only* label so the auth
 flow is completable. With echo **off** and no provider, `requestOtp` **throws** — *"SMS delivery is
 not configured on this server, so a code cannot be sent."* A citizen waiting for a code that was
-never sent is worse than a clear failure. Setting `SMS_PROVIDER` without an implementation also
-throws, naming the provider.
+never sent is worse than a clear failure.
 
 `assertProductionSafety()` refuses a production boot with `OTP_DEV_ECHO` still on.
 
-**To implement**, add one function to `sendSms` in
-[src/modules/auth/auth.service.ts](../src/modules/auth/auth.service.ts). The three shapes:
+**As of Phase 5 (SJ-23/48), all three providers below are actually implemented** in
+[src/modules/notifications/sms.service.ts](../src/modules/notifications/sms.service.ts) — naming a
+`SMS_PROVIDER` with a real key now genuinely dispatches, rather than throwing "not implemented in this
+build" as it did before. None have been exercised against a live vendor account from this environment
+(no real credentials exist here); what is verified is that each function is shaped exactly to its
+vendor's documented contract, and that the unconfigured path still fails the same honest way it always
+did.
 
 | Provider | Endpoint | Credentials |
 |---|---|---|
-| **SSL Wireless** (most common for BD government/NGO) | `POST https://smsplus.sslwireless.com/api/v3/send-sms` — JSON `{api_token, sid, msisdn, sms, csms_id}` | API token + SID, allow-listed server IP |
-| **BulkSMSBD** | `GET/POST http://bulksmsbd.net/api/smsapi` — `api_key`, `senderid`, `number`, `message` | API key + approved sender ID |
-| **Twilio** | `POST https://api.twilio.com/2010-04-01/Accounts/{SID}/Messages.json` — basic auth, form-encoded `To`/`From`/`Body` | Account SID + auth token. Works internationally; costs more per BD message and needs a sender that BD operators accept |
+| **SSL Wireless** (most common for BD government/NGO) | `POST https://smsplus.sslwireless.com/api/v3/send-sms` — JSON `{api_token, sid, msisdn, sms, csms_id}` | API token (`SMS_API_KEY`) + SID (`SMS_SID`), allow-listed server IP |
+| **BulkSMSBD** | `GET http://bulksmsbd.net/api/smsapi` — `api_key`, `senderid`, `number`, `message` | API key + approved sender ID |
+| **Twilio** | `POST https://api.twilio.com/2010-04-01/Accounts/{SID}/Messages.json` — basic auth, form-encoded `To`/`From`/`Body` | Account SID (`SMS_SID`) + auth token (`SMS_API_KEY`). Works internationally; costs more per BD message and needs a sender that BD operators accept |
 
 A `+880` sender ID needs BTRC-registered masking; without it, messages arrive from a shortcode and
 some operators filter them. That is an operational prerequisite, not a code one.
+
+---
+
+## 4b. USSD gateway — the non-smartphone path (SJ-23/48)
+
+**Why:** PRD/BRD's reach goal is a citizen with no smartphone and no data plan, not just no email — SMS
+covers OTP delivery; USSD covers actually *using* the product (checking a benefit, filing a report)
+from any phone that can dial a short code.
+
+```bash
+USSD_GATEWAY_SECRET=""    # shared secret an aggregator's callback must present
+```
+
+**Endpoint:** `POST /api/v1/ussd/callback`. Authenticated by a shared secret in the `X-Ussd-Secret`
+header, since the caller is a telecom aggregator's server, not a logged-in browser — unset, the
+endpoint refuses every request rather than accepting an unauthenticated one.
+
+**Contract chosen, and why:** `{sessionId, phoneNumber, text}` in, `CON <text>` (keep session open) or
+`END <text>` (close it) out, plain text — Africa's Talking's own field names, which most aggregators'
+USSD gateways mirror closely. No BD-specific aggregator's exact shape was already documented here to
+copy, so this is the closest thing to an industry-standard contract rather than an invented one.
+**Adapting the field names or switching to form-encoding for a specific vendor's actual contract is
+integration work** — the same category as pointing `STT_BASE_URL` at a real speech vendor — not a
+redesign; the session-handling logic in
+[src/modules/ussd/ussd.service.ts](../src/modules/ussd/ussd.service.ts) does not change.
+
+**What it does today:** check a real entitlement status by National ID (works for anyone, no account
+needed — matches `checkEntitlementStatusByNid`), file a real issue report (requires the calling phone
+number to match an already residency-verified AccessAI account — see `docs/DEVIATIONS.md` §19 for why
+that scope was kept as tight as the web path), and list a citizen's own recent reports. Session state
+lives in `ussd_sessions`, since a USSD aggregator calls back on every keypress with the same
+`sessionId` and expects the server to remember which step it is on — unlike every other route in this
+app, which is stateless.
+
+---
+
+## 4c. Vision moderation — checking an uploaded photo (SJ-21)
+
+**Why:** citizen-submitted issue photos (`docs/DEVIATIONS.md` §16) had no automated check beyond file
+size and MIME type before Phase 5 — a photo could be anything.
+
+```bash
+VISION_MODERATION_API_KEY=""
+VISION_MODERATION_BASE_URL="https://api.openai.com/v1"    # OpenAI-compatible, vision-capable
+VISION_MODERATION_MODEL="gpt-4o-mini"
+```
+
+**Without a key** (the state of this repository), every submitted photo is marked
+`visionModerationStatus: "unavailable"` and auto-flagged for manual review — never silently passed
+through, and never given an invented pass/fail from a technique that cannot actually assess image
+content. **With a key**, a real `/chat/completions` call with an image content part asks the model
+whether the photo shows graphic content or is clearly unrelated to a civic complaint, and the issue is
+flagged or passed based on an actual answer. See
+[src/modules/issues/vision-moderation.ts](../src/modules/issues/vision-moderation.ts).
 
 ---
 
@@ -472,7 +531,10 @@ Validated by Zod at boot in [src/lib/config/env.ts](../src/lib/config/env.ts); a
 | `DEEPSEEK_REASONING_EFFORT` | — | `low…max`. Sent only when thinking is not disabled |
 | `DEEPSEEK_EXTRA_BODY` | — | JSON merged into the request body last, if the API changes |
 | `OTP_DEV_ECHO` | `true` | Shows the OTP in the UI, labelled. **Blocked in production** |
-| `SMS_PROVIDER` / `SMS_API_KEY` / `SMS_SENDER_ID` | — | Gateway credentials |
+| `SMS_PROVIDER` / `SMS_API_KEY` / `SMS_SID` / `SMS_SENDER_ID` | — | Gateway credentials — see §4 |
+| `USSD_GATEWAY_SECRET` | — | Shared secret for `/api/v1/ussd/callback` — see §4b |
+| `VISION_MODERATION_API_KEY` / `_BASE_URL` / `_MODEL` | `https://api.openai.com/v1` / `gpt-4o-mini` | Issue-photo moderation — see §4c |
+| `FIELD_ENCRYPTION_KEY` | dev fallback | AES-256-GCM key for `medicalConditions` at rest (base64, 32 bytes). **Must be replaced** |
 | `NEXT_PUBLIC_MAP_PROVIDER` | `none` | `none \| mapbox \| google` |
 | `NEXT_PUBLIC_MAPBOX_TOKEN` / `GOOGLE_MAPS_API_KEY` | — | Tile credentials |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` | port `587` | Email |
@@ -489,6 +551,7 @@ Validated by Zod at boot in [src/lib/config/env.ts](../src/lib/config/env.ts); a
 - `JWT_SECRET` or `JWT_REFRESH_SECRET` still the shipped `dev-only-…` value
 - `JWT_SECRET` shorter than 32 characters
 - `OTP_DEV_ECHO` still enabled — it reveals OTPs to the client
+- `FIELD_ENCRYPTION_KEY` not set — health data would be encrypted with the shipped development key
 
 A weak signing secret is a total-compromise defect, so it is an error rather than a warning.
 

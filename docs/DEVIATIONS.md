@@ -512,3 +512,162 @@ public-facing transparency surface for the ledger (SJ-37, Phase 4); Zila-officer
 (SJ-29, Phase 4). The Zila officer civic role exists and can be assigned today; it has no dedicated
 screen yet, on purpose.
 - **PWA / push notifications** are not implemented. Notifications are persisted and shown in-app.
+
+## 18. Shebar Janala Phase 4: oversight portals
+
+**Donor is not a fifth civic role.** SJ-25's chairman/officer titles fit `CIVIC_ROLES` because they are
+places in a governmental hierarchy with real authority over a union/upazila/district. A donor
+organisation (SJ-27) has none of that — funding a programme confers no authority over any union — so
+folding it into `CIVIC_ROLE_RANK` would have implied a seniority relationship that does not exist.
+Instead `users.donor_org_id` is its own nullable FK, and `donor_funding_scopes` records exactly which
+programme codes a donor org funds. The Donor Portal's scoping is enforced the same way civic scoping
+is: every query in `getDonorPortalData` filters to the org's actual funding scopes, never the whole
+ledger — a donor funding only "Widow Allowance" cannot see numbers for any other programme, live-
+verified by creating a donor org scoped to one programme and confirming the portal shows exactly that
+programme's real beneficiary/disbursement counts and nothing else.
+
+**SJ-29's rollup is the SAME code as SJ-25's single-union view, not a second implementation.**
+`getLeaderPortalData` takes an `OversightScope` (`union` | `upazila` | `district`), resolves it to a
+list of union ids first, and every subsequent query is `WHERE union_id IN (...)`. A chairman's scope
+resolves to one id; an officer's resolves to every union in their upazila/district. This was a
+genuine gap in the existing seed data: all four Phase 1 unions were seeded in four *different*
+upazilas, so no upazila officer's rollup had more than one union to aggregate — a rollup that always
+degenerates to the single-union case proves nothing. A fifth union (Mominpur, same upazila as
+Kaligonj) was added specifically so the Rangpur Sadar officer's `/leader` view has two unions' worth of
+allocations and issues to combine, live-verified to return the sum of both.
+
+**SJ-28's anomaly checks are deterministic, not ML — the same line the eligibility engine and the
+issue-text keyword filter already draw.** `modules/oversight/anomaly.ts` is four fixed, explainable
+rules: an allocation far above its union's own median (needs at least two other allocations in that
+union to compare against — with fewer, it says nothing rather than inventing a signal from one data
+point); the same NID active in the same programme across two unions; a disbursement exceeding its
+entitlement's stated amount (exact, not statistical); and a pending escalation stale for two weeks.
+Every one can be explained to the person it flags in one sentence and checked by hand — the same bar
+`docs/DEVIATIONS.md` §14 already set for why ranking factors here stay deterministic when they return
+"neutral" rather than guess.
+
+**SJ-37's public transparency page is a genuinely separate surface, not the admin dashboard reused.**
+It lives at `[locale]/transparency`, *outside* the `(app)` route group entirely, so it never passes
+through the staff-only layout or session guard — anyone, including someone with no AccessAI account,
+can load it. `getPublicTransparencyData()` was written by deciding what is safe to publish BEFORE
+writing the query, not by filtering an existing internal query after the fact: union names, allocation
+totals/counts/flag-counts/escalation-counts (aggregate), programme-level active-beneficiary counts and
+total paid amounts (aggregate, no beneficiary identity), a live re-run of the SJ-13 ledger integrity
+check, and elected officials' names. That last one is deliberate, not an oversight — a union chairman
+is a public official whose name being attached to the budget they posted is the entire point of
+transparency, unlike a citizen who flagged an allocation or reported an issue, whose identity never
+appears here even in aggregate form.
+
+## 19. Shebar Janala Phase 5: reach & defense
+
+**SMS now has three real provider implementations, not a stub.** `modules/notifications/sms.service.ts`
+implements the exact three shapes `docs/EXTERNAL.md` already documented — SSL Wireless's JSON API,
+BulkSMSBD's query-string API, and Twilio's REST API — replacing `auth.service.ts`'s
+"not implemented in this build" throw with a real dispatch. None of them were exercised against a live
+account in this environment (no real credentials exist here), so what was actually verified is: the
+unconfigured path still throws the same honest, unchanged error it always did, and each provider
+function is a real HTTP call shaped exactly to that vendor's documented contract — not a mock, and not
+newly untested plumbing sitting behind a name nobody will ever call.
+
+**USSD is new ground — this codebase invented the callback contract rather than copying a documented
+one, because no BD aggregator's exact shape was already in `docs/EXTERNAL.md`.**
+`POST /api/v1/ussd/callback` uses the near-universal `{sessionId, phoneNumber, text}` request /
+`CON`/`END`-prefixed plain-text response shape (Africa's Talking's own field names, which most
+aggregators' USSD gateways mirror closely). A real BD aggregator contract may differ in field names or
+use form-encoding instead of JSON — adapting this route to the actual vendor is integration work, the
+same category of task as pointing `STT_BASE_URL` at a real speech vendor, not a redesign. Authenticated
+by a shared secret (`USSD_GATEWAY_SECRET`) rather than a session, since the caller is a telecom
+aggregator's server. Live-verified end to end against real seeded data with no browser involved:
+dialing in, checking a real beneficiary's entitlement status by NID, and filing a real issue report
+that then appeared in the citizen's own "my reports" list and in the staff moderation queue —
+genuinely exercising SJ-23/48's "a citizen without a smartphone" exit criterion, not simulated.
+
+**Issue reporting via USSD is scoped exactly as tightly as the web path, which cost it its scope.**
+The reporter and their union both come from an ALREADY residency-verified account matched by the
+caller's own phone number — supplied by the telecom network in the callback, never typed by the
+caller, which is *stronger* provenance than a web form field. A phone not linked to a verified account
+is told so honestly and pointed at the real verification flow, rather than being allowed to file into
+an invented or guessed union. The consequence: a citizen with no AccessAI account at all cannot report
+an issue by USSD, only check a benefit status by NID (which needs no account). Registering an account
+by USSD itself was out of scope for this pass — PIN setup and OTP delivery do not map cleanly onto a
+USSD session's constraints, and a real solution deserves its own design rather than a rushed one bolted
+onto this callback.
+
+**SJ-19's ghost-beneficiary check is a real, checkable signal, not a fraud verdict.**
+`detectUnverifiedBeneficiaryIdentity` flags a beneficiary whose NID hash has never been confirmed by
+anyone going through actual NID verification (`modules/identity/nid.service.ts`). This does not prove
+fraud — a genuine beneficiary may simply not have an AccessAI account yet — and is surfaced as an
+alert for a human to follow up on, never acted on automatically. The BRD's own framing ("needs real
+disbursement volume") is honestly reflected: with a handful of seed rows, these checks mostly find
+nothing, correctly, because there is not yet enough data for "far above normal" to mean anything — the
+mechanism is real and tested; what it needs to become *useful* is the volume this pilot does not have.
+
+**SJ-21's vision moderation makes a real vision-model call when configured, and honestly refuses to
+guess when it is not — it does not fall back to a local heuristic pretending to be one.**
+`modules/issues/vision-moderation.ts` calls an OpenAI-compatible `/chat/completions` endpoint with an
+image content part (`VISION_MODERATION_API_KEY`/`_BASE_URL`/`_MODEL`, the same seam pattern as
+STT/TTS). Unconfigured — the state of this environment — every photo is marked `unavailable` and
+auto-flagged for manual review, live-verified: an issue submitted with a real photo came back
+`autoFlagged: true`, `visionModerationStatus: "unavailable"`, and appeared in the staff moderation
+queue exactly as an un-checked photo should. What was deliberately NOT built is a deterministic
+stand-in for NSFW/violence detection (e.g. a perceptual-hash duplicate check) — a fabricated pass/fail
+from a technique that cannot actually assess image content would be worse than the honest "not
+checked" this defaults to.
+
+**SJ-41's audit tool calls the SAME verification functions the in-app page calls, on purpose — and
+that choice is what caught a real bug.** `scripts/ledger-audit.ts` imports `verifyLedgerChain()` and
+`verifyAuditChain()` directly rather than re-deriving the hash logic itself, specifically so the
+script and the `/admin/ledger` page can never silently disagree. Running it while building this phase
+surfaced a genuine, pre-existing defect: `recordAudit()`'s "find the last hash to extend from" query
+took the single most recent `audit_log` row regardless of whether it was hash-chained, but
+`auth.service.ts` had its own separate, non-chained insert path for `auth.login`/`auth.logout`/etc. —
+by far the highest-volume action in the table. The instant a login became the most recent row,
+`recordAudit()` fell back to `GENESIS`, collided with the unique index on `prev_hash` against the
+actual first chained row, and every subsequent audited admin action failed outright until the process
+restarted. Fixed two ways: the lookup now filters to `entry_hash IS NOT NULL`, and `auth.service.ts`'s
+`audit()` now calls the same `recordAudit()` everything else does, so login/logout are finally inside
+the chain instead of a silent, permanently-uncovered gap in SJ-13's own coverage. See
+`docs/LEDGER-INTEGRITY.md` for what the chain proves and how to check it yourself.
+
+**SJ-42's compliance review is a self-assessment, deliberately not a certification.** See
+`docs/COMPLIANCE.md`. An AI agent mapping features to a specific Act's provisions is a useful first
+pass for a qualified reviewer to check, not a substitute for one — the document says this explicitly
+rather than implying a legal sign-off that did not happen.
+
+**SJ-43's retention job deletes, it does not quietly anonymise-in-place.** `enforceDataRetention()`
+(`modules/admin/retention.service.ts`) deletes conversations (cascading their messages) whose last
+message is older than 730 days, AI logs older than 365 days, and OTP challenges expired more than a
+week. Blanking a conversation's content while leaving its row, timestamps, and user link intact would
+still be a re-identifiable trace — a real retention policy removes the record, not just what a casual
+query shows. `ledger_entries` and `audit_log` are never touched by this job, by name, in both the code
+and this document: they are the accountability record Phase 3 exists to provide, and a "data
+retention" job that quietly shortened either would defeat SJ-13/14's entire purpose. The specific
+day counts are a defensible default, not a legal determination — see `docs/COMPLIANCE.md`.
+
+**SJ-44's field encryption covers `medicalConditions` only, and the fields it does NOT cover are a
+scoping decision made in the open, not a silent gap.** AES-256-GCM
+(`lib/security/field-encryption.ts`) protects `userProfiles.medical_conditions` at rest — the one field
+in the original audit's "phone, address, and health data are plaintext" finding that is genuinely
+free-standing: it is read and written in exactly four places (`lib/http/session.ts`,
+`modules/ai/conversation.service.ts` twice, and the profile PATCH route), all now mapped and covered,
+and never appears in a SQL `WHERE` clause anywhere in the app. Two fields were deliberately left
+plaintext this pass:
+  - **`userProfiles.district`/`upazila`** are read in-memory by the eligibility engine but touch five-
+    plus call sites (opportunity listing, nearby search, the AI extractor, seed data) with no isolated
+    regression cycle to catch a mistake across all of them. Encrypting them is architecturally *safe*
+    (confirmed: no SQL-level equality/filter ever runs against these columns), just not done in this
+    pass.
+  - **`users.phone`** is the one field genuinely blocked on more than time: it is looked up via
+    `WHERE phone = ?` on login, so encrypting it for real needs a blind index — a separate
+    `HMAC(phone, serverKey)` column for equality lookup, ciphertext for display — not a naive column
+    swap. That is the correct design, and it was not attempted here because bolting it onto a live
+    authentication path without a dedicated, isolated testing cycle is exactly the kind of change that
+    silently breaks login for every account if one call site is missed.
+
+  Both are recorded here as the next concrete step, not swept under "future work" — see
+  `docs/COMPLIANCE.md` for the same point made for a compliance reviewer's benefit.
+
+  The redaction discipline this introduces matters beyond the column itself: `users/profile/route.ts`'s
+  audit-log entries now store `medicalConditions: "[redacted]"` in `before`/`after`, never the
+  decrypted value — encrypting the primary column while a side table kept a plaintext copy of the same
+  data would have defeated the point.
