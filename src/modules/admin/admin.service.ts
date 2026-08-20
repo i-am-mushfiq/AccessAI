@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, sql, count, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, sql, count, inArray, isNotNull } from 'drizzle-orm';
 import { db } from '@/lib/db/client';
 import {
   opportunities, organizations, documents, documentChunks, aiLogs, feedback,
@@ -12,6 +12,8 @@ import { describeAiMode } from '@/modules/ai/providers';
 import { hasEmbeddingProvider } from '@/lib/config/env';
 import type { UserRole } from '@/lib/domain/enums';
 import { GENESIS_HASH, computeEntryHash, verifyChain, type ChainVerificationResult } from '@/modules/ledger/hash-chain';
+import { enforceDataRetention } from './retention.service';
+import { purgeStaleUssdSessions } from '@/modules/ussd/ussd.service';
 
 /**
  * Administrative operations: analytics, system health, and the background jobs
@@ -459,12 +461,25 @@ export async function aggregateAnalytics() {
   });
 }
 
+/** SJ-43 — deletes personal data past its retention window; never touches the ledger or audit log. */
+export async function runDataRetention() {
+  return runJob('enforce_data_retention', async () => {
+    const result = await enforceDataRetention();
+    const ussdSessionsPurged = await purgeStaleUssdSessions();
+    return {
+      processed: result.conversationsDeleted + result.aiLogsDeleted + result.otpChallengesDeleted + ussdSessionsPurged,
+      detail: { ...result, ussdSessionsPurged },
+    };
+  });
+}
+
 export const JOBS = {
   reindex_search: reindexSearch,
   rebuild_embeddings: rebuildEmbeddings,
   detect_staleness: detectStaleness,
   scheduled_notifications: sendScheduledNotifications,
   aggregate_analytics: aggregateAnalytics,
+  enforce_data_retention: runDataRetention,
 } as const;
 
 export type JobName = keyof typeof JOBS;
@@ -483,17 +498,37 @@ export async function listAuditLog(limit = 100, entityType?: string) {
 /**
  * SJ-13 — every row folds in the previous one's hash (modules/ledger/hash-chain.ts).
  * Same single-writer caveat as the financial ledger: see docs/DEVIATIONS.md.
+ *
+ * The "last hash" lookup filters to `entryHash IS NOT NULL` rather than just
+ * taking the most recent row. Without that filter this silently breaks: this
+ * is the ONE place any code in the app writes an audit_log row, so once
+ * login/logout events (the highest-volume action, `auth.login`) were folded
+ * into this same function, the naive "most recent row" query worked — but
+ * for a while a separate write path in auth.service.ts inserted those same
+ * rows directly with no hash at all. The instant one of those became the
+ * most recent row, the next `recordAudit()` call fell back to GENESIS again
+ * and collided with the actual first row (`prev_hash` is uniquely indexed),
+ * throwing on every audited action until the process restarted. Filtering to
+ * chained rows only makes the lookup correct regardless of what wrote the
+ * most recent row.
  */
 export async function recordAudit(input: {
-  actorId: string;
-  actorRole: UserRole;
+  actorId: string | null;
+  actorRole: UserRole | null;
   action: string;
   entityType: string;
   entityId?: string | null;
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
+  ip?: string | null;
+  userAgent?: string | null;
 }) {
-  const [last] = await db.select({ entryHash: auditLog.entryHash }).from(auditLog).orderBy(desc(auditLog.createdAt)).limit(1);
+  const [last] = await db
+    .select({ entryHash: auditLog.entryHash })
+    .from(auditLog)
+    .where(isNotNull(auditLog.entryHash))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(1);
   const prevHash = last?.entryHash ?? GENESIS_HASH;
 
   const payload = {
@@ -507,7 +542,7 @@ export async function recordAudit(input: {
   };
   const entryHash = computeEntryHash(prevHash, payload);
 
-  await db.insert(auditLog).values({ ...payload, prevHash, entryHash });
+  await db.insert(auditLog).values({ ...payload, ip: input.ip ?? null, userAgent: input.userAgent ?? null, prevHash, entryHash });
 }
 
 /** Walks every hash-chained row (skipping pre-migration rows with no hash) and reports whether it is intact. */

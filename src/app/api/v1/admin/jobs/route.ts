@@ -8,7 +8,10 @@ import { requireStaff } from '@/lib/http/session';
 import { JOBS, recordAudit, type JobName } from '@/modules/admin/admin.service';
 
 const runSchema = z.object({
-  job: z.enum(['reindex_search', 'rebuild_embeddings', 'detect_staleness', 'scheduled_notifications', 'aggregate_analytics']),
+  job: z.enum([
+    'reindex_search', 'rebuild_embeddings', 'detect_staleness', 'scheduled_notifications',
+    'aggregate_analytics', 'enforce_data_retention',
+  ]),
 });
 
 /**
@@ -70,6 +73,8 @@ const JOB_DESCRIPTIONS: Record<JobName, string> = {
   scheduled_notifications:
     'Creates deadline reminders for every citizen with a saved programme closing within seven days.',
   aggregate_analytics: 'Writes today\'s analytics rollup.',
+  enforce_data_retention:
+    'Deletes conversations, AI logs, and expired OTP challenges past their retention window. Never touches the financial ledger or audit log.',
 };
 
 export const dynamic = 'force-dynamic';

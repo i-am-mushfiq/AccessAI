@@ -20,6 +20,7 @@
     "voice:check": "tsx scripts/voice-check.ts",
     "osm:clear": "tsx scripts/clear-osm-cache.ts",
     "voice:bangla": "tsx scripts/voice-bangla-probe.ts",
+    "ledger:audit": "tsx scripts/ledger-audit.ts",
     "setup": "npm run db:push && npm run db:seed",
     "test": "vitest run",
     "test:watch": "vitest",
