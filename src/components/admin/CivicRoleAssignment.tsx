@@ -22,6 +22,7 @@ export interface CivicUserRow {
   readonly civicUnionId: string | null;
   readonly civicUpazila: string | null;
   readonly civicDistrict: string | null;
+  readonly donorOrgId: string | null;
 }
 
 const ROLE_LABEL: Record<CivicRole, string> = {
@@ -35,10 +36,12 @@ const ROLE_LABEL: Record<CivicRole, string> = {
 export function CivicRoleAssignment({
   items,
   unions,
+  donorOrgs = [],
   canManage,
 }: {
   readonly items: readonly CivicUserRow[];
   readonly unions: readonly { readonly id: string; readonly name: string; readonly nameBn: string }[];
+  readonly donorOrgs?: readonly { readonly id: string; readonly name: string }[];
   readonly canManage: boolean;
 }) {
   const t = useTranslations('admin');
@@ -52,6 +55,7 @@ export function CivicRoleAssignment({
   const [draftUnionId, setDraftUnionId] = useState<string | undefined>();
   const [draftUpazila, setDraftUpazila] = useState('');
   const [draftDistrict, setDraftDistrict] = useState('');
+  const [draftDonorOrgId, setDraftDonorOrgId] = useState<string | undefined>();
 
   const assign = useMutation({
     mutationFn: (userId: string) =>
@@ -61,6 +65,7 @@ export function CivicRoleAssignment({
         civicUnionId: draftRole === 'union_chairman' || draftRole === 'union_staff' ? draftUnionId : null,
         civicUpazila: draftRole === 'upazila_officer' ? draftUpazila : null,
         civicDistrict: draftRole === 'zila_officer' ? draftDistrict : null,
+        donorOrgId: draftDonorOrgId ?? null,
       }),
     onSuccess: () => {
       toast.show({ tone: 'success', message: tc('saved') });
@@ -76,6 +81,7 @@ export function CivicRoleAssignment({
     setDraftUnionId(row.civicUnionId ?? undefined);
     setDraftUpazila(row.civicUpazila ?? '');
     setDraftDistrict(row.civicDistrict ?? '');
+    setDraftDonorOrgId(row.donorOrgId ?? undefined);
   };
 
   return (
@@ -88,9 +94,14 @@ export function CivicRoleAssignment({
                 <p className="type-body-lg text-text-primary">{row.name}</p>
                 <p className="type-caption tabular text-text-tertiary">{row.phone}</p>
               </div>
-              <Badge tone={row.civicRole === 'none' ? 'neutral' : 'brand'}>
-                {row.civicRole === 'none' ? t('noCivicRole') : ROLE_LABEL[row.civicRole]}
-              </Badge>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <Badge tone={row.civicRole === 'none' ? 'neutral' : 'brand'}>
+                  {row.civicRole === 'none' ? t('noCivicRole') : ROLE_LABEL[row.civicRole]}
+                </Badge>
+                {row.donorOrgId ? (
+                  <Badge tone="info">{donorOrgs.find((d) => d.id === row.donorOrgId)?.name ?? t('donorOrgs')}</Badge>
+                ) : null}
+              </div>
             </div>
 
             {canManage && editingId !== row.id ? (
@@ -122,6 +133,15 @@ export function CivicRoleAssignment({
                 ) : null}
                 {draftRole === 'zila_officer' ? (
                   <TextField label="District" value={draftDistrict} onChange={(e) => setDraftDistrict(e.target.value)} />
+                ) : null}
+                {donorOrgs.length > 0 ? (
+                  <Select
+                    label={t('assignDonorOrg')}
+                    placeholder={t('noDonorOrg')}
+                    options={[{ value: '', label: t('noDonorOrg') }, ...donorOrgs.map((d) => ({ value: d.id, label: d.name }))]}
+                    value={draftDonorOrgId ?? ''}
+                    onChange={(value) => setDraftDonorOrgId(value || undefined)}
+                  />
                 ) : null}
                 <div className="flex gap-2">
                   <Button

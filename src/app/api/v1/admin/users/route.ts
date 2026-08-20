@@ -18,6 +18,8 @@ const patchSchema = z.object({
   civicUnionId: z.string().uuid().nullish(),
   civicUpazila: z.string().trim().min(1).max(120).nullish(),
   civicDistrict: z.string().trim().min(1).max(120).nullish(),
+  /** SJ-27. Presence makes an account a donor representative — see modules/oversight. */
+  donorOrgId: z.string().uuid().nullish(),
 });
 
 /**
@@ -58,6 +60,7 @@ export async function GET(request: NextRequest) {
         civicUnionId: users.civicUnionId,
         civicUpazila: users.civicUpazila,
         civicDistrict: users.civicDistrict,
+        donorOrgId: users.donorOrgId,
       })
       .from(users)
       .where(
@@ -119,6 +122,7 @@ export async function PATCH(request: NextRequest) {
       patch.civicUpazila = body.civicRole === 'upazila_officer' ? (body.civicUpazila ?? null) : null;
       patch.civicDistrict = body.civicRole === 'zila_officer' ? (body.civicDistrict ?? null) : null;
     }
+    if (body.donorOrgId !== undefined) patch.donorOrgId = body.donorOrgId ?? null;
 
     const [updated] = await db.update(users).set(patch).where(eq(users.id, body.userId)).returning();
 
@@ -134,8 +138,8 @@ export async function PATCH(request: NextRequest) {
       action: 'user.update',
       entityType: 'user',
       entityId: body.userId,
-      before: { role: target.role, status: target.status, civicRole: target.civicRole },
-      after: { role: updated!.role, status: updated!.status, civicRole: updated!.civicRole },
+      before: { role: target.role, status: target.status, civicRole: target.civicRole, donorOrgId: target.donorOrgId },
+      after: { role: updated!.role, status: updated!.status, civicRole: updated!.civicRole, donorOrgId: updated!.donorOrgId },
     });
 
     return ok({
@@ -148,6 +152,7 @@ export async function PATCH(request: NextRequest) {
         civicUnionId: updated!.civicUnionId,
         civicUpazila: updated!.civicUpazila,
         civicDistrict: updated!.civicDistrict,
+        donorOrgId: updated!.donorOrgId,
       },
       sessionsRevoked: Boolean(demoted || body.status === 'suspended'),
     });

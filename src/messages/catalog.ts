@@ -96,6 +96,8 @@ export const catalog = {
     budget: ['ইউনিয়ন বাজেট', 'Union budget'],
     entitlements: ['আমার ভাতা', 'My entitlements'],
     officer: ['উপজেলা কর্মকর্তা', 'Upazila officer'],
+    leader: ['নেতৃত্ব ড্যাশবোর্ড', 'Leadership dashboard'],
+    donor: ['দাতা পোর্টাল', 'Donor portal'],
     mainNavigation: ['প্রধান মেনু', 'Main navigation'],
     skipToContent: ['মূল অংশে যান', 'Skip to main content'],
   },
@@ -974,6 +976,12 @@ export const catalog = {
     ledgerIntegrity: ['লেজার যাচাই', 'Ledger integrity'],
     financialLedger: ['আর্থিক লেজার', 'Financial ledger'],
     auditLogChain: ['কার্যবিবরণী চেইন', 'Audit log chain'],
+    donorOrgs: ['দাতা সংস্থা', 'Donor organisations'],
+    createDonorOrg: ['নতুন দাতা সংস্থা যোগ করুন', 'Add a donor organisation'],
+    donorOrgName: ['সংস্থার নাম', 'Organisation name'],
+    donorProgramCodes: ['যেসব কর্মসূচিতে অর্থায়ন করে', 'Programme codes funded'],
+    noDonorOrg: ['কোনো দাতা সংস্থা নয়', 'Not a donor representative'],
+    assignDonorOrg: ['দাতা সংস্থা নির্ধারণ করুন', 'Assign donor organisation'],
   },
 
   identity: {
@@ -1158,6 +1166,70 @@ export const catalog = {
       resolved: ['সমাধান হয়েছে', 'Resolved'],
       dismissed: ['খারিজ হয়েছে', 'Dismissed'],
     },
+  },
+
+  leader: {
+    title: ['নেতৃত্ব ড্যাশবোর্ড', 'Leadership dashboard'],
+    subtitle: [
+      'আপনার ইউনিয়নের বরাদ্দ, সমস্যা এবং ভাতার সারাংশ।',
+      'A summary of allocations, issues, and entitlements in your area.',
+    ],
+    scopeUnion: ['ইউনিয়ন', 'Union'],
+    scopeUpazila: ['উপজেলা (সব ইউনিয়ন)', 'Upazila (all unions)'],
+    scopeDistrict: ['জেলা (সব ইউনিয়ন)', 'District (all unions)'],
+    allocationsTotal: ['মোট বরাদ্দ', 'Total allocated'],
+    allocationsFlagged: ['চিহ্নিত বরাদ্দ', 'Flagged allocations'],
+    allocationsEscalated: ['এস্কেলেটেড', 'Escalated'],
+    issuesTotal: ['মোট রিপোর্ট', 'Total reports'],
+    beneficiariesTotal: ['মোট সুবিধাভোগী', 'Total beneficiaries'],
+    disbursedPaid: ['পরিশোধিত', 'Disbursed (paid)'],
+    disbursedScheduled: ['নির্ধারিত', 'Disbursed (scheduled)'],
+    anomalies: ['সতর্কতা', 'Alerts'],
+    noAnomalies: ['কোনো সতর্কতা নেই।', 'No alerts right now.'],
+    notLeader: [
+      'এই পোর্টাল ইউনিয়ন চেয়ারম্যান, ইউনিয়ন কর্মী এবং উপজেলা/জেলা কর্মকর্তাদের জন্য।',
+      'This portal is for union chairmen, union staff, and upazila/zila officers.',
+    ],
+  },
+
+  donor: {
+    title: ['দাতা পোর্টাল', 'Donor portal'],
+    subtitle: [
+      'আপনার সংস্থা যে কর্মসূচিতে অর্থায়ন করে তার প্রকৃত ব্যবহার ও প্রভাব।',
+      'Real fund utilisation and impact for the programmes your organisation funds.',
+    ],
+    program: ['কর্মসূচি', 'Programme'],
+    beneficiaries: ['সুবিধাভোগী', 'Beneficiaries'],
+    unionsReached: ['পৌঁছানো ইউনিয়ন', 'Unions reached'],
+    disbursedPaid: ['পরিশোধিত', 'Disbursed (paid)'],
+    disbursedScheduled: ['নির্ধারিত', 'Disbursed (scheduled)'],
+    notDonor: ['এই পোর্টাল শুধুমাত্র দাতা প্রতিনিধিদের জন্য।', 'This portal is for donor representatives only.'],
+    noScopes: [
+      'আপনার সংস্থার জন্য কোনো কর্মসূচি নির্ধারিত নেই। একজন প্রশাসকের সঙ্গে যোগাযোগ করুন।',
+      'No programmes are configured for your organisation yet. Contact an administrator.',
+    ],
+  },
+
+  transparency: {
+    title: ['স্বচ্ছতা', 'Transparency'],
+    subtitle: [
+      'জনসাধারণের জন্য উন্মুক্ত — কোনো সাইন ইনের প্রয়োজন নেই। ইউনিয়ন পরিষদ আইন ২০০৯-এর জবাবদিহিতার প্রতিশ্রুতি অনুযায়ী প্রকাশিত।',
+      'Open to the public — no sign-in required. Published in keeping with the Union Parishads Act 2009\'s accountability commitments.',
+    ],
+    ledgerIntact: ['লেজার অক্ষত — কোনো টেম্পারিং শনাক্ত হয়নি', 'Ledger intact — no tampering detected'],
+    ledgerBroken: ['লেজার যাচাই ব্যর্থ হয়েছে', 'Ledger verification failed'],
+    entriesVerified: ['এন্ট্রি যাচাই করা হয়েছে', 'entries verified'],
+    unions: ['ইউনিয়ন', 'Unions'],
+    chairman: ['চেয়ারম্যান', 'Chairman'],
+    allocations: ['বরাদ্দ', 'Allocations'],
+    flagged: ['চিহ্নিত', 'Flagged'],
+    escalated: ['এস্কেলেটেড', 'Escalated'],
+    programs: ['কর্মসূচি', 'Programmes'],
+    activeBeneficiaries: ['সক্রিয় সুবিধাভোগী', 'Active beneficiaries'],
+    totalDisbursed: ['মোট পরিশোধিত', 'Total disbursed'],
+    issueStatusBreakdown: ['সমস্যা রিপোর্টের অবস্থা', 'Issue report status'],
+    generatedAt: ['তৈরি হয়েছে', 'Generated at'],
+    noChairman: ['নির্ধারিত নয়', 'Not assigned'],
   },
 
   errors: {
