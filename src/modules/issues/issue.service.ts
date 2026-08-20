@@ -5,6 +5,7 @@ import type { Issue } from '@/lib/db/schema';
 import type { IssueCategory, IssueStatus } from '@/lib/domain/enums';
 import { screenIssueText } from './moderation';
 import { saveIssuePhoto } from './photo-storage';
+import { moderateIssuePhoto } from './vision-moderation';
 import { canTransition, PUBLICLY_VISIBLE_STATUSES } from './state-machine';
 
 /**
@@ -33,10 +34,19 @@ export async function submitIssue(input: SubmitIssueInput): Promise<Issue> {
   const screen = screenIssueText(input.title, input.description);
 
   let photoUrl: string | null = null;
+  let vision: { readonly status: 'not_applicable' | 'unavailable' | 'passed' | 'flagged'; readonly flagged: boolean; readonly reason: string | null } = {
+    status: 'not_applicable',
+    flagged: false,
+    reason: null,
+  };
   if (input.photoDataUrl) {
+    vision = await moderateIssuePhoto(input.photoDataUrl);
     const saved = await saveIssuePhoto(input.photoDataUrl);
     photoUrl = saved.url;
   }
+
+  const flagged = screen.flagged || vision.flagged;
+  const flagReason = [screen.flagged ? screen.reason : null, vision.flagged ? vision.reason : null].filter(Boolean).join(' | ') || null;
 
   const [row] = await db
     .insert(issues)
@@ -53,8 +63,9 @@ export async function submitIssue(input: SubmitIssueInput): Promise<Issue> {
       // distinct enum value for a future asynchronous intake channel
       // (SMS/USSD, Phase 5), not because the web flow pauses there.
       status: 'under_review',
-      autoFlagged: screen.flagged,
-      autoFlagReason: screen.reason,
+      autoFlagged: flagged,
+      autoFlagReason: flagReason,
+      visionModerationStatus: vision.status,
     })
     .returning();
 
@@ -63,7 +74,7 @@ export async function submitIssue(input: SubmitIssueInput): Promise<Issue> {
     fromStatus: null,
     toStatus: 'under_review',
     changedBy: input.reporterId,
-    note: screen.flagged ? `Auto-flagged: ${screen.reason}` : null,
+    note: flagged ? `Auto-flagged: ${flagReason}` : null,
   });
 
   return row!;
